@@ -39,42 +39,24 @@ ASSETS = [
     "SHA256SUMS.txt",
 ]
 
-BODY = """## CKeyViewer {ver}
+BODY_FILE = os.path.join(ROOT, "docs", "RELEASE_NOTES_%s.md" % TAG)
 
-Windows 上的按键可视化覆盖层 —— 透明置顶窗口，实时显示按键按下状态、按键计数、KPS 与雨线特效。
-配置格式与 [JipperKeyViewer](https://github.com/adofaiex/JipperKeyViewer) 双向兼容。
 
-作者 **DXBbyd** · QQ `3157037483`
-
-### 下载哪个
-
-| 文件 | 说明 |
-| --- | --- |
-| `CKeyViewerSetup-{ver}.exe` | **安装程序**（推荐）。装到用户目录、建快捷方式、自动打上「以管理员运行」标记，可从「设置 → 应用」卸载 |
-| `CKeyViewer-{ver}-portable-win64.zip` | **便携版**。解压即用，双击 `CKeyViewer.exe`（记得右键 → 以管理员身份运行） |
-| `SHA256SUMS.txt` | 上面两个文件的校验和 |
-
-两个包都是**自包含单文件**，自带 .NET 运行时，不用装任何依赖。
-
-### 注意
-
-- **必须以管理员身份运行**，否则会弹出「请使用管理员运行此程序」然后退出。
-  这是设计如此：低完整性权限读不到更高级别进程（例如以管理员启动的游戏）的按键。
-- 如果双击没反应，看 README 的「装不上 / 打不开？」一节 ——
-  最常见的原因是所在目录被执行策略限制，换个普通目录即可。
-- Win11 默认把新的托盘图标收进「隐藏的图标」折叠区，点托盘左侧的 `^` 就能看到。
-
-### 主要内容
-
-- 主键 8 种布局 + 脚键 8 种，含 Full108 全键盘
-- 可绑任意字母 / 数字 / 功能键 / 小键盘，以及**左右区分的 Shift / Ctrl / Alt** 和**鼠标 5 键**
-- 自由布局：节点可拖拽，位置 / 尺寸 / 层级 / 配色 / 按键绑定全可调，支持图层组
-- KPS / Total / 每键计数，27 条缓动曲线的按压缩放，三行独立雨线 + 鬼键雨线
-- 12 页深色设置面板（含「关于」），改动即时生效 + 防抖落盘，系统托盘，5 组全局热键
-- 附带 `CKeyViewer.exe --selftest` 无界面自检（20 项断言）
-
-**MIT License** · 完整说明见 [README](https://github.com/DXBbyd/CKeyViewer#readme)
-""".format(ver=VERSION)
+def release_body():
+    """Release notes 以 docs/RELEASE_NOTES_<tag>.md 为准，避免两处维护。"""
+    for path in (BODY_FILE,
+                 os.path.join(ROOT, "docs", "RELEASE_NOTES_v%s.md" % VERSION)):
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read().strip()
+            if text:
+                print("   用 %s 作为 Release notes（%d 字）" % (os.path.basename(path), len(text)))
+                return text
+    print("   没找到 Release notes 文件，用兜底文案")
+    return ("CKeyViewer %s —— Windows 上的按键可视化覆盖层。\n\n"
+            "下载 `CKeyViewerSetup-%s.exe` 安装，或用 `CKeyViewer-%s-portable-win64.zip` 便携版。\n\n"
+            "**必须以管理员身份运行**，完整说明见 "
+            "[README](https://github.com/DXBbyd/CKeyViewer#readme)。" % (VERSION, VERSION, VERSION))
 
 
 def api(method, path, payload=None, timeout=90):
@@ -152,14 +134,21 @@ def main():
         print("   还没有，创建新的 Release")
 
     if release is None:
+        body = release_body()
         release = with_retry(lambda: api("POST", "/repos/%s/releases" % REPO, {
             "tag_name": TAG,
             "name": RELEASE_NAME,
-            "body": BODY,
+            "body": body,
             "draft": False,
             "prerelease": False,
         }), label="创建 Release")
         print("   已创建：%s" % release["html_url"])
+    elif "--update-body" in sys.argv:
+        # 已经建好了，只把 notes 刷新一遍
+        body = release_body()
+        release = with_retry(lambda: api("PATCH", "/repos/%s/releases/%d" % (REPO, release["id"]),
+                                         {"body": body}), label="更新 notes")
+        print("   已更新 Release notes")
 
     # ---- 传资产（同名先删，方便反复跑）----
     upload_base = release["upload_url"].split("{")[0]

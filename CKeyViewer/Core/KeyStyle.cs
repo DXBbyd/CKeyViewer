@@ -31,6 +31,12 @@ namespace CKeyViewer.Core
         /// <summary>边框宽度（参考单位）；&lt;0 表示沿用全局默认。</summary>
         public double BorderThickness;
 
+        /// <summary>
+        /// 该键槽使用的字体引用（系统字体族名或字体文件路径）；null / 空表示沿用全局字体。
+        /// 渲染器据此逐键解析 Typeface，实现「节点自定义字体」。
+        /// </summary>
+        public string FontRef;
+
         public KvColor Bg(bool pressed) => pressed ? BackgroundClicked : Background;
         public KvColor Line(bool pressed) => pressed ? OutlineClicked : Outline;
         public KvColor Fg(bool pressed) => pressed ? TextClicked : Text;

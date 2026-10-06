@@ -65,6 +65,13 @@ namespace CKeyViewer.Render
         public bool Bold = true;
         public bool Italic;
 
+        // ---- 覆盖层背景图片 ----
+        public string BackgroundImagePath;
+        public int BackgroundImageMode;            // 0=拉伸 1=覆盖 2=适应
+        public KvColor BackgroundImageBorder = KvColor.Rgba(0.6078f, 0.302f, 1.0f, 1.0f);
+        public double BackgroundImageBorderWidth;
+        public double BackgroundImageOpacity = 1.0;
+
         public bool CountFormatting = true;
         public string KpsLabel = "KPS";
         public string TotalLabel = "Total";
@@ -85,6 +92,9 @@ namespace CKeyViewer.Render
         public bool RainEnabled = true;
         public IRainLayer Rain;
 
+        /// <summary>逐键槽字体缓存：避免每帧都去解析 Typeface。</summary>
+        private readonly Dictionary<string, Typeface> _tfCache = new Dictionary<string, Typeface>();
+
         protected override void OnRender(DrawingContext dc)
         {
             RenderCount++;
@@ -92,6 +102,9 @@ namespace CKeyViewer.Render
 
             double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
             var typeface = KvFonts.Resolve(FontRef, Bold, Italic);
+
+            // 背景图片画在最底层（在雨线 / 键帽 / 网格之前）
+            DrawBackground(dc);
 
             if (RainEnabled && Rain != null)
                 Rain.Draw(dc, this, ppd);
@@ -108,6 +121,81 @@ namespace CKeyViewer.Render
                 // 选中高亮与提示条画在键帽之上，否则会被键帽盖住
                 DrawLayoutSelection(dc, typeface, ppd);
                 DrawLayoutBanner(dc, typeface, ppd);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // 覆盖层背景图片
+        // ---------------------------------------------------------------
+
+        /// <summary>
+        /// 把 <see cref="BackgroundImagePath"/> 指定的图片铺在覆盖层窗口后面，
+        /// 并在其外缘画一圈描边（让背景与桌面分隔得更干净）。
+        /// </summary>
+        private void DrawBackground(DrawingContext dc)
+        {
+            if (string.IsNullOrWhiteSpace(BackgroundImagePath)) return;
+            var img = LoadImage(BackgroundImagePath);
+            if (img == null) return;
+
+            double w = Math.Max(1, ActualWidth);
+            double h = Math.Max(1, ActualHeight);
+
+            double border = Math.Max(0, BackgroundImageBorderWidth * Scale);
+            // 收缩半个线宽，免得描边被画布边缘裁掉
+            var rect = new Rect(
+                border * 0.5,
+                border * 0.5,
+                Math.Max(0, w - border),
+                Math.Max(0, h - border));
+
+            if (BackgroundImageOpacity > 0.001 && BackgroundImageOpacity < 0.999)
+                dc.PushOpacity(BackgroundImageOpacity);
+
+            Rect target = FitImage(img.Width, img.Height, rect, BackgroundImageMode);
+            dc.DrawImage(img, target);
+
+            if (border > 0 && !BackgroundImageBorder.IsInvisible)
+            {
+                var pen = new Pen(BackgroundImageBorder.ToBrush(), border);
+                pen.Freeze();
+                dc.DrawRoundedRectangle(null, pen, rect, Math.Min(border, 8), Math.Min(border, 8));
+            }
+
+            if (BackgroundImageOpacity > 0.001 && BackgroundImageOpacity < 0.999)
+                dc.Pop();
+        }
+
+        /// <summary>按缩放模式把图片映射进目标矩形：0=拉伸 / 1=覆盖（裁切）/ 2=适应（留边）。</summary>
+        private static Rect FitImage(double imgW, double imgH, Rect area, int mode)
+        {
+            if (imgW <= 0 || imgH <= 0) return area;
+            double aw = area.Width, ah = area.Height;
+            if (mode == 1) // 覆盖：等比放大到铺满，居中裁切
+            {
+                double s = Math.Max(aw / imgW, ah / imgH);
+                double dw = imgW * s, dh = imgH * s;
+                return new Rect(area.X + (aw - dw) * 0.5, area.Y + (ah - dh) * 0.5, dw, dh);
+            }
+            if (mode == 2) // 适应：等比缩小到完整显示，居中留边
+            {
+                double s = Math.Min(aw / imgW, ah / imgH);
+                double dw = imgW * s, dh = imgH * s;
+                return new Rect(area.X + (aw - dw) * 0.5, area.Y + (ah - dh) * 0.5, dw, dh);
+            }
+            return area; // 拉伸填满
+        }
+
+        /// <summary>解析某键槽的字体：为空（或解析失败）时回落到全局 <see cref="FontRef"/>。</summary>
+        private Typeface ResolveSlotTypeface(string fontRef)
+        {
+            if (string.IsNullOrWhiteSpace(fontRef)) return null;
+            lock (_tfCache)
+            {
+                if (_tfCache.TryGetValue(fontRef, out var cached)) return cached;
+                var tf = KvFonts.Resolve(fontRef, Bold, Italic);
+                _tfCache[fontRef] = tf;
+                return tf;
             }
         }
 
@@ -286,6 +374,9 @@ namespace CKeyViewer.Render
             bool showCount = true, hideLabel = false;
             double opacity = 1.0, radiusOverride = -1, borderOverride = -1;
 
+            // 节点自定义字体：解析一次（带缓存），失败则回落全局字体
+            Typeface textTypeface = typeface;
+
             if (Styles != null && Styles.TryGetValue(slot.Index, out var st))
             {
                 bg = st.Bg(pressed); outline = st.Line(pressed); fg = st.Fg(pressed);
@@ -295,6 +386,11 @@ namespace CKeyViewer.Render
                 if (st.Opacity > 0) opacity = st.Opacity;
                 radiusOverride = st.CornerRadius;
                 borderOverride = st.BorderThickness;
+                if (!string.IsNullOrEmpty(st.FontRef))
+                {
+                    var tf = ResolveSlotTypeface(st.FontRef);
+                    if (tf != null) textTypeface = tf;
+                }
             }
             else if (slot.Index == -1)
             {
@@ -357,7 +453,7 @@ namespace CKeyViewer.Render
                 return;
             }
 
-            DrawKeyText(dc, slot, rect, key, typeface, ppd, fg, fontOverride, showCount, hideLabel);
+            DrawKeyText(dc, slot, rect, key, textTypeface, ppd, fg, fontOverride, showCount, hideLabel);
             if (useOpacity) dc.Pop();
         }
 

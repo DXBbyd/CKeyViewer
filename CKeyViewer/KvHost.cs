@@ -301,6 +301,13 @@ namespace CKeyViewer
             r.AnimAffectsRain = P.EnablePressAnimationOnRain;
             r.RainPadding = topExtent - contentTop;
 
+            // 覆盖层背景图片
+            r.BackgroundImagePath = P.BackgroundImagePath ?? "";
+            r.BackgroundImageMode = P.BackgroundImageMode;
+            r.BackgroundImageBorder = P.BackgroundImageBorder;
+            r.BackgroundImageBorderWidth = P.BackgroundImageBorderWidth;
+            r.BackgroundImageOpacity = Math.Clamp(P.BackgroundImageOpacity, 0f, 1f);
+
             ApplyWindowGeometry(blockWidth, blockHeight, scale);
         }
 
@@ -420,6 +427,8 @@ namespace CKeyViewer
                     if (node.FontSize > 0f) st.FontSize = node.FontSize;
                     if (node.CornerRadius > 0f) st.CornerRadius = node.CornerRadius;
                     if (node.BorderThickness > 0f) st.BorderThickness = node.BorderThickness;
+                    if (node.UseCustomFont && !string.IsNullOrEmpty(node.FontName))
+                        st.FontRef = node.FontName;
 
                     st.Opacity = Math.Clamp(node.Opacity <= 0f ? 1f : node.Opacity, 0.02f, 1f);
                     st.HideLabel = node.HideLabel;

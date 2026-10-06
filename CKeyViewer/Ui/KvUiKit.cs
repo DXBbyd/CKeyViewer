@@ -800,9 +800,34 @@ namespace CKeyViewer.Ui
                 FontSize = 12.5,
                 Foreground = Text,
                 Cursor = Cursors.Hand,
-                MinWidth = 78
+                MinWidth = 78,
+                RenderTransformOrigin = new Point(0.5, 0.5)
             };
+            b.RenderTransform = new ScaleTransform(1, 1);
             if (!double.IsNaN(width)) b.Width = width;
+
+            // 悬停 / 按下时轻微缩放，给界面一点「动感」
+            void ScaleTo(double s)
+            {
+                try
+                {
+                    var st = b.RenderTransform as ScaleTransform;
+                    if (st == null) return;
+                    var anim = new System.Windows.Media.Animation.DoubleAnimation(
+                        st.ScaleX, s, System.Windows.Duration.Automatic);
+                    anim.Duration = new System.Windows.Duration(TimeSpan.FromMilliseconds(110));
+                    anim.EasingFunction = new System.Windows.Media.Animation.CubicEase
+                    { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+                    st.BeginAnimation(ScaleTransform.ScaleXProperty, anim);
+                    st.BeginAnimation(ScaleTransform.ScaleYProperty, anim);
+                }
+                catch { }
+            }
+            b.MouseEnter += (s, e) => ScaleTo(1.04);
+            b.MouseLeave += (s, e) => ScaleTo(1.0);
+            b.PreviewMouseDown += (s, e) => ScaleTo(0.96);
+            b.PreviewMouseUp += (s, e) => ScaleTo(1.04);
+
             b.Click += (s, e) => act();
             return b;
         }

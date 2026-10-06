@@ -25,6 +25,12 @@ namespace CKeyViewer.Core
         /// </summary>
         public bool ArrowNudge { get; set; }
 
+        /// <summary>
+        /// 「拖拽为只」：开启后自由布局编辑器隐藏坐标数字输入，节点位置只能靠在屏幕上拖拽。
+        /// 与「引导创建按键」流程共享同一个隐藏坐标的行为。
+        /// </summary>
+        public bool DragOnlyPosition { get; set; }
+
         public void Sanitize()
         {
             if (Version <= 0) Version = 6;

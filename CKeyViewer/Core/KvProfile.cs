@@ -148,6 +148,15 @@ namespace CKeyViewer.Core
         public int FontStyleFlags { get; set; } = 2;
         public float KeyFontSize { get; set; } = 21f;
 
+        // ---- 覆盖层背景图片 ----
+        // 路径为空表示不画背景；否则把图片铺在覆盖层（即 KV 所在窗口）后面。
+        // BackgroundImageMode：0 = 拉伸填满（可能变形）/ 1 = 覆盖（等比缩放铺满并裁切）/ 2 = 适应（等比完整显示）。
+        public string BackgroundImagePath { get; set; } = "";
+        public int BackgroundImageMode { get; set; } = 1;
+        public KvColor BackgroundImageBorder { get; set; } = KvColor.Rgba(0.6078f, 0.302f, 1.0f, 1.0f);
+        public float BackgroundImageBorderWidth { get; set; } = 3f;
+        public float BackgroundImageOpacity { get; set; } = 1f;
+
         // ---- 显示选项 ----
         public bool EnableCountFormatting { get; set; } = true;
         public bool HideMainKeyCount { get; set; }
@@ -399,6 +408,12 @@ namespace CKeyViewer.Core
             if (KeyFontSize < 4f || KeyFontSize > 200f) KeyFontSize = 21f;
             if (Size < 0.05f || Size > 10f) Size = 1f;
             if (FontStyleFlags < 0) FontStyleFlags = 0;
+
+            if (BackgroundImageMode < 0 || BackgroundImageMode > 2) BackgroundImageMode = 1;
+            if (BackgroundImageBorderWidth < 0f || float.IsNaN(BackgroundImageBorderWidth)) BackgroundImageBorderWidth = 3f;
+            if (BackgroundImageOpacity < 0f || float.IsNaN(BackgroundImageOpacity)) BackgroundImageOpacity = 1f;
+            else BackgroundImageOpacity = Math.Clamp(BackgroundImageOpacity, 0f, 1f);
+            BackgroundImagePath = BackgroundImagePath ?? "";
 
             // Count 必须固定 40，与原版 LoadProfile 的校验一致
             if (Count == null) Count = new int[40];

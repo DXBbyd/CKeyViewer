@@ -104,6 +104,10 @@ namespace CKeyViewer.Core
         public float FontSize { get; set; }
         public bool Hidden { get; set; }
         public bool UseCustomTextStyle { get; set; }
+
+        // ---- 节点自定义字体（覆盖全局字体）----
+        public bool UseCustomFont { get; set; }
+        public string FontName { get; set; } = "";
         public bool KeyTextOutlineEnabled { get; set; }
         public float[] KeyTextOutlineColor { get; set; }
         public float KeyTextOutlineThickness { get; set; } = 0.2f;
@@ -176,6 +180,7 @@ namespace CKeyViewer.Core
             n.KeyTextShadowColor = CopyArr(KeyTextShadowColor);
             n.CountTextOutlineColor = CopyArr(CountTextOutlineColor);
             n.CountTextShadowColor = CopyArr(CountTextShadowColor);
+            n.FontName = FontName;
             return n;
         }
 
@@ -209,6 +214,7 @@ namespace CKeyViewer.Core
             ImagePath = ImagePath ?? "";
             ImagePathPressed = ImagePathPressed ?? "";
             VideoPath = VideoPath ?? "";
+            FontName = FontName ?? "";
         }
 
         private static float Safe(float v, float fallback, float lo, float hi)

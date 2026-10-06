@@ -6,6 +6,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Markup;
+using Microsoft.Win32;
 using CKeyViewer.Core;
 using CKeyViewer.Render;
 using CKeyViewer.Ui;
@@ -28,6 +31,9 @@ namespace CKeyViewer
         private int _tab;
         private bool _suppress;
         private bool _rebuildQueued;
+
+        /// <summary>正在「引导创建」的节点 id（0 = 无）。引导流程：录入按键 → 配置大小 → 仅拖拽摆放。</summary>
+        private int _guidedId;
 
         /// <summary>「自由布局」标签页的下标（拖动模式与主机状态联动时用到）。</summary>
         private const int CustomTab = 2;
@@ -294,6 +300,36 @@ namespace CKeyViewer
             else
             {
                 _scroll.ScrollToTop();
+                AnimateIn(panel);
+            }
+        }
+
+        /// <summary>切标签页时给内容一个淡入 + 轻微上滑，让界面「动」起来。</summary>
+        private void AnimateIn(FrameworkElement el)
+        {
+            try
+            {
+                el.Opacity = 0;
+                var tr = new TranslateTransform(0, 10);
+                el.RenderTransform = tr;
+                el.RenderTransformOrigin = new Point(0.5, 0);
+                var sb = new Storyboard();
+                var oa = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(170))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                var ya = new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(210))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                Storyboard.SetTarget(oa, el);
+                Storyboard.SetTargetProperty(oa, new PropertyPath(UIElement.OpacityProperty));
+                Storyboard.SetTarget(ya, tr);
+                Storyboard.SetTargetProperty(ya, new PropertyPath(TranslateTransform.YProperty));
+                sb.Children.Add(oa);
+                sb.Children.Add(ya);
+                sb.Begin();
+            }
+            catch
+            {
+                el.Opacity = 1;
+                el.RenderTransform = null;
             }
         }
 
@@ -501,7 +537,7 @@ namespace CKeyViewer
             p.Children.Add(Kit.Section("节点（" + nodes.Count + "）"));
 
             p.Children.Add(Kit.HRow(
-                Kit.Button("＋ 按键", () => AddNode(0), accent: true),
+                Kit.Button("＋ 按键", () => AddNode(0, true), accent: true),
                 Kit.Button("＋ KPS", () => AddNode(1)),
                 Kit.Button("＋ Total", () => AddNode(2)),
                 Kit.Button("＋ 图片", () => AddNode(3))
@@ -531,7 +567,12 @@ namespace CKeyViewer
 
             p.Children.Add(Kit.Combo("选中节点", labels, () => cur, i =>
             {
-                if (i >= 0 && i < nodes.Count) _host.SelectNode(nodes[i].Id);
+                if (i >= 0 && i < nodes.Count)
+                {
+                    // 切换到别的节点就退出引导态，免得「新建引导」卡在别的键上
+                    if (nodes[i].Id != _guidedId) _guidedId = 0;
+                    _host.SelectNode(nodes[i].Id);
+                }
             }, 300));
 
             var sel = _host.SelectedNode;
@@ -569,6 +610,32 @@ namespace CKeyViewer
                 "当前节点：{0} · Depth {1}{2}", sel.TypeName, sel.Depth,
                 sel.Unselectable ? " · 不可被鼠标选中" : "")));
 
+            // ---- 引导创建流程：录入按键 → 配置大小 → 仅拖拽 ----
+            if (_guidedId == sel.Id)
+            {
+                bool recorded = !string.IsNullOrEmpty(sel.KeyBind);
+                var gb = new Border
+                {
+                    Background = Kit.AccentDim,
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(12, 10, 12, 10),
+                    Margin = new Thickness(0, 4, 0, 6),
+                    BorderBrush = Kit.Accent,
+                    BorderThickness = new Thickness(1)
+                };
+                var gs = new StackPanel();
+                gs.Children.Add(Kit.Text2("引导创建按键", 13, Kit.Accent, bold: true));
+                gs.Children.Add(Kit.Hint("按 ① → ② → ③ 的顺序来："));
+                gs.Children.Add(Kit.Hint((recorded ? "✔ " : "① ") + " 录入按键：点下面的「录入按键」按钮，再按下要绑定的键。"));
+                gs.Children.Add(Kit.Hint("② 配置按键大小：在下方「位置与尺寸」里调宽高。"));
+                gs.Children.Add(Kit.Hint("③ 拖拽摆放：坐标输入已隐藏，只能到屏幕上拖拽定位（见下方「拖动摆放」）。"));
+                gb.Child = gs;
+                p.Children.Add(gb);
+                p.Children.Add(Kit.HRow(
+                    Kit.Button("完成引导", () => { _guidedId = 0; Rebuild(); }, accent: true),
+                    Kit.Hint("完成后「仅拖拽」限制解除，坐标数字输入恢复。")));
+            }
+
             p.Children.Add(Kit.Section("拖动摆放"));
             p.Children.Add(Kit.HRow(
                 Kit.Button(_host.LayoutMode ? "退出拖动模式（Esc）" : "▶ 在屏幕上拖动调整",
@@ -586,11 +653,24 @@ namespace CKeyViewer
                 ? "已开启：方向键每按一次移动 1 单位。注意方向键常被游戏 / 浏览器占用，小心误触。"
                 : "默认关闭 —— 方向键常被游戏 / 浏览器占用，开着的话在别的窗口按方向键会把节点悄悄带偏。"));
 
+            // 引导创建 / 拖拽为只：隐藏坐标数字输入，位置只能靠屏幕拖拽
+            bool hideXY = _guidedId == sel.Id || _host.Store.Settings.DragOnlyPosition;
+
             p.Children.Add(Kit.Section("位置与尺寸（画布单位）"));
-            p.Children.Add(Kit.NumberRow("X（左边缘）", () => sel.X,
-                v => Apply(() => sel.X = (float)v), 1, 0, Math.Round(_host.CanvasWidthRef)));
-            p.Children.Add(Kit.NumberRow("Y（上边缘）", () => sel.Y,
-                v => Apply(() => sel.Y = (float)v), 1, 0, KvGeometry.CanvasHeight));
+            p.Children.Add(Kit.Check("拖拽为只（隐藏坐标输入，只能拖拽定位）",
+                () => _host.Store.Settings.DragOnlyPosition,
+                v => Apply(() => _host.Store.Settings.DragOnlyPosition = v, true)));
+            if (hideXY)
+            {
+                p.Children.Add(Kit.Hint("坐标数字输入已隐藏：到屏幕上拖动节点即可定位（见下方「拖动摆放」）。"));
+            }
+            else
+            {
+                p.Children.Add(Kit.NumberRow("X（左边缘）", () => sel.X,
+                    v => Apply(() => sel.X = (float)v), 1, 0, Math.Round(_host.CanvasWidthRef)));
+                p.Children.Add(Kit.NumberRow("Y（上边缘）", () => sel.Y,
+                    v => Apply(() => sel.Y = (float)v), 1, 0, KvGeometry.CanvasHeight));
+            }
             p.Children.Add(Kit.NumberRow("宽 Width", () => sel.Width,
                 v => Apply(() => sel.Width = (float)Math.Max(2, v)), 1, 2, 4000));
             p.Children.Add(Kit.NumberRow("高 Height", () => sel.Height,
@@ -609,7 +689,8 @@ namespace CKeyViewer
             {
                 p.Children.Add(Kit.Section("按键绑定"));
                 p.Children.Add(Kit.Hint("KeyBind 存的是 Unity KeyCode 的枚举名（A / Space / LeftShift …），与原版一致。"));
-                p.Children.Add(Kit.KeyRow("绑定按键", () => KeyCodeMap.FromName(sel.KeyBind),
+                p.Children.Add(Kit.KeyRow(_guidedId == sel.Id ? "录入按键" : "绑定按键",
+                    () => KeyCodeMap.FromName(sel.KeyBind),
                     v => Apply(() => sel.KeyBind = KeyCodeMap.NameOf(v))));
                 p.Children.Add(Kit.TextBoxRow("键名文字（留空 = 键码名）", () => sel.CustomText,
                     v => Apply(() => sel.CustomText = v ?? "")));
@@ -641,6 +722,25 @@ namespace CKeyViewer
             p.Children.Add(Kit.Section("字体与形状（0 = 沿用全局）"));
             p.Children.Add(Kit.NumberRow("字号 FontSize", () => sel.FontSize,
                 v => Apply(() => sel.FontSize = (float)v), 1, 0, 300));
+
+            // ---- 节点自定义字体（按键节点才有意义）----
+            if (sel.NodeType == 0)
+            {
+                p.Children.Add(Kit.Section("节点字体（覆盖全局）"));
+                p.Children.Add(Kit.Check("使用自定义字体", () => sel.UseCustomFont, v =>
+                {
+                    Apply(() =>
+                    {
+                        if (v && string.IsNullOrEmpty(sel.FontName)) sel.FontName = P.FontName;
+                        sel.UseCustomFont = v;
+                    }, true);
+                }));
+                if (sel.UseCustomFont)
+                {
+                    p.Children.Add(FontPickerRow(() => sel.FontName,
+                        v => Apply(() => sel.FontName = v ?? "", true)));
+                }
+            }
             p.Children.Add(Kit.NumberRow("圆角 CornerRadius", () => sel.CornerRadius,
                 v => Apply(() => sel.CornerRadius = (float)v), 1, 0, 400));
             p.Children.Add(Kit.NumberRow("边框宽度 BorderThickness", () => sel.BorderThickness,
@@ -801,22 +901,38 @@ namespace CKeyViewer
         }
 
         /// <summary>新建节点后直接选中它，并顺手进入拖动模式 —— 新建的目的就是摆放。</summary>
-        private void AddNode(int type)
+        private void AddNode(int type, bool guided = false)
         {
+            if (type == 0) _guidedId = 0;   // 非引导的新键先清掉旧的引导态
+
             int newId = 0;
             Apply(() =>
             {
                 float w = (type == 1 || type == 2) ? 220f : 60f;
                 float h = (type == 1 || type == 2) ? 36f : 60f;
                 var n = P.NewNode(type, 200f, 200f, w, h);
-                if (type == 0) n.KeyBind = "A";
+                if (type == 0)
+                {
+                    if (guided) n.KeyBind = "";   // 引导流程：先不绑定，等用户录入
+                    else n.KeyBind = "A";
+                }
                 n.UseCustomColor = false;
                 newId = n.Id;
             }, true);
 
             if (newId <= 0) return;
             _host.SelectNode(newId);
-            if (!_host.LayoutMode) _host.SetLayoutMode(true, "new node");
+
+            if (type == 0 && guided)
+            {
+                // 引导创建：留在编辑器里先录入按键、配尺寸，拖拽放到第三步再进布局模式
+                _guidedId = newId;
+                Rebuild();
+            }
+            else if (!_host.LayoutMode)
+            {
+                _host.SetLayoutMode(true, "new node");
+            }
         }
 
         /// <summary>把节点的 6 个颜色数组初始化成当前全局配色，避免一开开关就变黑。</summary>
@@ -855,8 +971,7 @@ namespace CKeyViewer
         private void BuildAppearance(Panel p)
         {
             p.Children.Add(Kit.Section("字体"));
-            p.Children.Add(Kit.EditableCombo("字体名（可手填）", FontChoices(), P.FontName,
-                v => Apply(() => P.FontName = v), 260));
+            p.Children.Add(FontPickerRow(() => P.FontName, v => Apply(() => P.FontName = v)));
             p.Children.Add(Kit.Slider("键名字号", 6, 90, () => P.KeyFontSize, v => Apply(() => P.KeyFontSize = (float)v)));
             p.Children.Add(Kit.HRow(
                 Kit.Check("粗体", () => (P.FontStyleFlags & 1) != 0, v => Apply(() =>
@@ -883,6 +998,40 @@ namespace CKeyViewer
                 "描边宽度 {0:0.#}、圆角半径 {1:0.#} —— 这两个值在原版里由精灵图与程序化网格决定，\r\n" +
                 "没有对应的配置项，这里保持与原版一致的固定值。",
                 KvGeometry.OutlineWidth, KvGeometry.CornerRadius)));
+
+            // ================= 覆盖层背景图片 =================
+            p.Children.Add(Kit.Section("覆盖层背景图片"));
+            p.Children.Add(Kit.Hint("把一张图片铺在 KeyViewer 后面当背景；留空则不使用。图片外会画一圈描边，好看一些。"));
+
+            p.Children.Add(Kit.HRow(
+                Kit.TextBoxRow("图片路径", () => P.BackgroundImagePath, v => Apply(() =>
+                {
+                    P.BackgroundImagePath = v ?? "";
+                    OverlayRenderer.ClearImageCache();
+                }, true), 300, 110),
+                Kit.Button("浏览…", () =>
+                {
+                    var dlg = new OpenFileDialog
+                    {
+                        Filter = "图片 (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp|所有文件 (*.*)|*.*",
+                        Title = "选择背景图片"
+                    };
+                    if (dlg.ShowDialog(this) == true && !string.IsNullOrEmpty(dlg.FileName))
+                        Apply(() => { P.BackgroundImagePath = dlg.FileName; OverlayRenderer.ClearImageCache(); }, true);
+                })
+            ));
+
+            p.Children.Add(Kit.Combo("填充方式", new[] { "拉伸填满（可能变形）", "覆盖（等比铺满裁切）", "适应（等比完整显示）" },
+                () => Math.Clamp(P.BackgroundImageMode, 0, 2),
+                i => Apply(() => P.BackgroundImageMode = i, true), 220));
+
+            p.Children.Add(Kit.Slider("不透明度", 0.05, 1, () => P.BackgroundImageOpacity,
+                v => Apply(() => P.BackgroundImageOpacity = (float)v), "0.00"));
+            p.Children.Add(Kit.NumberRow("边框宽度", () => P.BackgroundImageBorderWidth,
+                v => Apply(() => P.BackgroundImageBorderWidth = (float)v), 0.5, 0, 60, "0.#"));
+            p.Children.Add(Kit.ColorRow("边框颜色", () => P.BackgroundImageBorder,
+                v => Apply(() => P.BackgroundImageBorder = v)));
+            p.Children.Add(Kit.Hint("背景图片覆盖整个 KeyViewer 窗口（预设布局下即底部那块区域，自由布局下即整屏）。"));
         }
 
         // ---- 4. 文字 ----
@@ -1521,6 +1670,9 @@ namespace CKeyViewer
         {
             var list = new List<string> { "MapleStory", "cjkFonts-regular-normalized", "Segoe UI" };
 
+            try { foreach (var f in Fonts.SystemFontFamilies) list.Add(f.FamilyNames.TryGetValue(XmlLanguage.GetLanguage("zh"), out var zh) ? zh : f.Source); }
+            catch { }
+
             try
             {
                 foreach (var dir in KvFonts.SearchDirs())
@@ -1541,6 +1693,48 @@ namespace CKeyViewer
             catch { }
 
             return list.Distinct().ToList();
+        }
+
+        /// <summary>
+        /// 字体选择控件：可手填的字体名下拉 + 「浏览字体文件…」按钮 + 实时预览。
+        /// 用于全局字体与「节点自定义字体」两处。
+        /// </summary>
+        private FrameworkElement FontPickerRow(Func<string> get, Action<string> set)
+        {
+            var sp = new StackPanel { Margin = new Thickness(0, 2, 0, 2) };
+
+            sp.Children.Add(Kit.EditableCombo("字体", FontChoices(), get() ?? "", v => set(v), 240));
+
+            var preview = Kit.Text2("AaBb 按键 1 A B 字", 15, Kit.Text);
+            preview.Margin = new Thickness(0, 4, 0, 2);
+
+            var browse = Kit.Button("浏览字体文件…", () =>
+            {
+                var dlg = new OpenFileDialog
+                {
+                    Filter = "字体文件 (*.ttf;*.otf;*.ttc)|*.ttf;*.otf;*.ttc|所有文件 (*.*)|*.*",
+                    Title = "选择字体文件"
+                };
+                if (dlg.ShowDialog(this) == true && !string.IsNullOrEmpty(dlg.FileName)) set(dlg.FileName);
+            });
+
+            void RefreshFont()
+            {
+                string name = get() ?? "";
+                try
+                {
+                    var tf = KvFonts.Resolve(name, false, false);
+                    preview.FontFamily = tf.FontFamily;
+                    preview.Text = string.IsNullOrEmpty(name)
+                        ? "AaBb 按键 1 A B 字（沿用全局）"
+                        : "AaBb 按键 1 A B 字  ·  " + Path.GetFileNameWithoutExtension(name);
+                }
+                catch { }
+            }
+            RefreshFont();
+
+            sp.Children.Add(Kit.HRow(browse, preview));
+            return sp;
         }
     }
 
