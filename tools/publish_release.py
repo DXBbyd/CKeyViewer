@@ -74,18 +74,25 @@ def api(method, path, payload=None, timeout=90):
 
 
 def upload(url, path):
-    """流式上传（Content-Length 固定长度，不走 chunked）。"""
-    size = os.path.getsize(path)
-    req = urllib.request.Request(url, method="POST")
+    """上传资产。
+
+    这里**不能**手动 `add_header("Content-Length", ...)` 再塞一个文件对象当 body ——
+    那个组合会让 GitHub 的 uploads 端点回
+    `400 {"message":"Bad Content-Length"}`：自己声明的长度和 http.client
+    实际成帧发出去的字节数对不上（传文件对象时它走的是 `_read_readable` 分块发送）。
+    改成把文件读成 bytes 交给 urllib，长度由它自己数，就不会出错。
+    108 MB 峰值内存可以接受，而且有重试兜底。
+    """
+    with open(path, "rb") as f:
+        blob = f.read()
+
+    req = urllib.request.Request(url, data=blob, method="POST")
     req.add_header("Authorization", "Bearer " + TOKEN)
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("User-Agent", "CKeyViewer-release")
     req.add_header("Content-Type", "application/octet-stream")
-    req.add_header("Content-Length", str(size))
-    with open(path, "rb") as f:
-        req.data = f
-        with urllib.request.urlopen(req, timeout=1800) as r:
-            return json.loads(r.read().decode("utf-8"))
+    with urllib.request.urlopen(req, timeout=1800) as r:
+        return json.loads(r.read().decode("utf-8"))
 
 
 def with_retry(fn, tries=3, label=""):
