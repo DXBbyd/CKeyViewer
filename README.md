@@ -26,6 +26,7 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 | **自由布局** | 每个元素是一个可拖拽的「节点」，位置 / 尺寸 / 层级 / 配色 / 按键绑定全可调，支持图层组与图片节点；**在覆盖层上直接拖动摆放** |
 | **档案** | 多档案热切换，与 jipper 的 `profiles/*.json` 一一对应 |
 | **界面** | 深色设置面板（11 个标签页），改动即时生效 + 防抖落盘；系统托盘；5 组全局热键（带备选） |
+| **安装** | 单文件 `CKeyViewerSetup.exe`，装到用户目录、建快捷方式、**默认以管理员运行**，可从「设置 → 应用」卸载 |
 
 ![设置面板](docs/screenshots/02-settings.png)
 ![Full108 全键盘](docs/screenshots/03-full108.png)
@@ -34,6 +35,48 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 ![自由布局](docs/screenshots/07-custom-layout.png)
 ![布局模式拖动](docs/screenshots/08-layout-mode.png)
 ![自由布局编辑器](docs/screenshots/09-custom-editor.png)
+
+---
+
+## 安装
+
+![安装程序](docs/screenshots/11-setup.png)
+
+下载 `CKeyViewerSetup.exe`，双击即可。**安装本身不需要管理员权限** —— 它只是把文件放进你的用户目录。
+
+| 步骤 | 说明 |
+| --- | --- |
+| 释放主程序 | 解包到 `%LOCALAPPDATA%\Programs\CKeyViewer\`（界面上可以改） |
+| 创建快捷方式 | 桌面 + 开始菜单，另有一个「卸载 CKeyViewer」 |
+| **默认以管理员运行** | 给装出来的 exe 打上 `RUNASADMIN` 兼容性标记，之后双击快捷方式会**自动弹 UAC 提权** |
+| 写入卸载信息 | 出现在「设置 → 应用 → 已安装的应用」，也可以从那里卸载 |
+| 迁移配置 | 若 `setup.exe` 隔壁放着 `config/`，会一并带进安装目录（同名文件先备份成 `*.before-install`） |
+
+命令行方式（静默安装 / 自定义目录）：
+
+```bash
+CKeyViewerSetup.exe --silent                                  # 默认目录，全程无界面
+CKeyViewerSetup.exe --dir=D:\Apps\CKeyViewer                  # 指定安装目录
+CKeyViewerSetup.exe --silent --no-desktop --no-start-menu     # 不建快捷方式
+CKeyViewerSetup.exe --silent --no-elevate                     # 不打「以管理员运行」标记
+CKeyViewerSetup.exe --silent --launch                         # 装完直接启动
+```
+
+卸载：
+
+```bash
+"%LOCALAPPDATA%\Programs\CKeyViewer\uninstall.exe" --uninstall
+# 带界面，可以勾选是否保留 config/（按键计数与配色）
+
+"%LOCALAPPDATA%\Programs\CKeyViewer\uninstall.exe" --uninstall --silent --keep-config
+```
+
+> **「以管理员运行」是怎么实现的？** 它是**按 exe 完整路径**绑在注册表
+> `HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers` 上的，
+> 值数据就是 `~ RUNASADMIN`。`.lnk` 本身**没有**这个标志位，所以不能只靠快捷方式表达 ——
+> 写在这个位置的好处是：快捷方式和直接双击 exe 都会提权。
+>
+> 卸载会把这个值一并清掉。
 
 ---
 
@@ -66,20 +109,29 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 以管理员身份启动：右键 `CKeyViewer.exe` → **以管理员身份运行**；
 或者右键 → 属性 → 兼容性 → 勾选「以管理员身份运行此程序」，之后双击即可。
 
+用[安装程序](#安装)装的话这一步**已经帮你做好了** —— 它写的就是上面那个兼容性标记，
+所以双击快捷方式会自动提权，不用每次右键。
+
 ---
 
 ## 快速开始
 
 ### 直接使用发布版
 
+装完之后主程序在：
+
 ```bash
-dist/CKeyViewer.exe
+"%LOCALAPPDATA%\Programs\CKeyViewer\CKeyViewer.exe"
 ```
 
-> **要以管理员身份运行**：右键 → 以管理员身份运行。双击会弹出「请使用管理员运行此程序」然后退出。
-> 首次启动需要解包自带运行时，会有几秒延迟。日志写在 exe 同级的 `ckv_error.log`。
-> 如果双击后毫无反应，把 `CKeyViewer.exe` 连同生成的 `config/` 拷到一个普通目录
-> （例如 `C:\CKeyViewer\`）再运行 —— 部分受管控目录会阻止单文件程序映射自身。
+> 双击桌面或开始菜单的快捷方式就行 —— 安装程序已经给它打好了「以管理员身份运行」标记，
+> 会**自动弹 UAC 提权**，不用每次右键。
+> 如果你直接把 `CKeyViewer.exe` 单独拷出来用（没经过安装程序），
+> 那就要自己右键 → 以管理员身份运行，否则会弹出「请使用管理员运行此程序」然后退出。
+
+首次启动需要解包自带运行时，会有几秒延迟。日志写在 exe 同级的 `ckv_error.log`。
+如果双击后毫无反应，把 `CKeyViewer.exe` 连同生成的 `config/` 拷到一个普通目录
+（例如 `C:\CKeyViewer\`）再运行 —— 部分受管控目录会阻止单文件程序映射自身。
 
 首次启动时，如果 exe 所在目录的附近（exe 目录、若干级祖先目录、当前工作目录）能找到 jipper 的 `config`，
 会自动迁移一份到 `config/`，原有的按键计数与配色开箱即用。
@@ -98,6 +150,16 @@ dotnet publish -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:DebugType=none -o ../dist
 ```
+
+### 打包安装程序
+
+```bash
+tools/build_setup.sh                    # 产物：release/setup/CKeyViewerSetup.exe
+tools/build_setup.sh D:\out             # 指定输出目录
+```
+
+先把主程序发布成自包含单文件，再把它作为嵌入资源打进安装程序里发布 ——
+所以 `CKeyViewerSetup.exe` 是**一个文件就能装**，不依赖网络与任何运行时。
 
 ---
 
@@ -281,7 +343,7 @@ CanvasWidth = 1080 * ScreenWidth / ScreenHeight
 ## 项目结构
 
 ```
-CKeyViewer/
+CKeyViewer/                    主程序
 ├─ Program.cs              装配：窗口 + 托盘 + 热键 + 设置面板（`--selftest` 无界面自检入口）
 ├─ Admin.cs                管理员权限检查 + 非管理员弹窗后退出
 ├─ SelfTest.cs             按键捕获的逻辑自检（假按键状态，不碰真实键鼠）
@@ -307,6 +369,18 @@ CKeyViewer/
 ├─ Native/Win32.cs         P/Invoke
 ├─ icon/icon.png           图标源图（1254×1254）
 └─ assets/app.ico          应用图标（tools/makeicon.py 从 icon.png 生成 9 档）
+
+setup/                         安装程序
+├─ Program.cs              入口（静默 / 带界面、全局异常兜底）
+├─ MainForm.cs             单窗口 UI，装 / 卸两种模式
+├─ Installer.cs            解包、快捷方式、RUNASADMIN 标记、卸载信息、config 迁移
+├─ Uninstaller.cs          卸载 + 延迟批处理自删
+├─ Shell.cs                IShellLinkW / IPersistFile 建快捷方式、进程工具
+├─ AppInfo.cs / SetupOptions.cs
+└─ payload/                构建时生成：主程序整包（已 gitignore）
+
+docs/screenshots/              README 用的截图
+tools/                         开发辅助脚本
 ```
 
 ---
@@ -318,6 +392,8 @@ CKeyViewer/
 | 脚本 | 用途 |
 | --- | --- |
 | `makeicon.py` | 用 Pillow 从 `CKeyViewer/icon/icon.png` 生成 9 档多尺寸 `app.ico`（含 256 px，分级降采样） |
+| `build_setup.sh` | 一键打包：发布主程序 → 放进 `setup/payload/` → 发布安装程序 → `release/setup/CKeyViewerSetup.exe` |
+| `setupshot.py` | 拉起 GUI 安装程序并 `PrintWindow` 截它的窗口（不受遮挡影响），用于 README |
 | `deadcode.py` | 粗粒度死代码扫描：找出只被声明、从没被引用的类型与成员 |
 | `runapp.py` | 启动调试版 → 等待 → 截图 → 读日志 → 结束（必须在同一进程里完成，后台会被回收） |
 | `pecheck.py` | 解析 PE 资源目录，确认图标与版本信息真的嵌进了 exe |
@@ -358,6 +434,8 @@ CKeyViewer/
   想观察以管理员启动的游戏，本程序的权限不能低于它。
 - 自由布局的**图片 / 视频节点**（`NodeType = 3`）代码路径已就绪，但尚未做真机贴图回归。
 - 鬼键雨线的代码路径已就绪，但默认配置里 `GhostKey*` 全为 0，需要先在「按键绑定」页绑定鬼键才能看到效果。
+- 安装程序**同时只支持一份安装**：卸载信息与快捷方式用的是固定的名字，
+  在第二个目录上跑一次卸载会把第一份的快捷方式与「应用」列表项一并清掉（安装目录本身不受影响）。
 
 ---
 
@@ -372,6 +450,10 @@ python tools/migrate_config.py <源目录> <目标目录>
 搬的是整个 `config/`（档案 + 全局设置），目标里同名文件会先备份成 `*.before-migrate`。
 **迁移前务必先关掉目标目录里正在运行的程序**，否则它下一次落盘会把刚写进去的档案盖回去。
 脚本不会改动源目录，所以搬错了重来即可。
+
+用[安装程序](#安装)的话还有一条更省事的路：把 `config/` 放在 `setup.exe` **隔壁**再运行安装程序，
+它会自动带进安装目录（同名文件备份成 `*.before-install`）。
+安装程序的界面上也能看到「迁移 setup.exe 旁边的 config /」这个勾选项。
 
 ---
 

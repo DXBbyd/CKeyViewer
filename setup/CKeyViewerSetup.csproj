@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>CKeyViewerSetup</AssemblyName>
+    <RootNamespace>CKeyViewer.Setup</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <StartupObject>CKeyViewer.Setup.Program</StartupObject>
+    <DebugType>none</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- 安装程序本身也要能独立运行，所以同样打成自包含单文件 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+
+    <!-- 源图同样是 CKeyViewer/icon/icon.png → app.ico -->
+    <ApplicationIcon>..\CKeyViewer\assets\app.ico</ApplicationIcon>
+
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyTitle>CKeyViewer 安装程序</AssemblyTitle>
+    <Product>CKeyViewer</Product>
+    <Company>DXBbyd</Company>
+    <Description>CKeyViewer 按键可视化覆盖层 —— 安装 / 卸载程序</Description>
+    <Copyright>Copyright © 2026 DXBbyd</Copyright>
+    <NeutralLanguage>zh-Hans</NeutralLanguage>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 主程序整包塞进安装程序里，装出来就是一个 300 MB 出头的单文件 setup.exe。
+         用 tools/build_setup.sh 在 publish 前把它拷进 payload/。 -->
+    <EmbeddedResource Include="payload\CKeyViewer.exe"
+                      LogicalName="CKeyViewerSetup.payload"
+                      Condition="Exists('payload\CKeyViewer.exe')" />
+  </ItemGroup>
+
+</Project>

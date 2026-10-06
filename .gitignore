@@ -11,7 +11,7 @@ obj/
 dist/
 dist_new/
 release/
-setup/
+setup/payload/
 *.exe
 *.msi
 *.zip
