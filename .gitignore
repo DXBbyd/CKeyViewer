@@ -26,6 +26,9 @@ jipper/
 re/
 _archive_c_impl/
 
+# ── 安卓工程：含预编译 APK / 密钥，本地保留不入库 ──────────
+CKeyViewerAndroid/
+
 # ── 开发辅助脚本的一次性产物 ──────────────────────────────
 tools/_*.png
 tools/_*.txt

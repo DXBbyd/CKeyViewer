@@ -25,8 +25,8 @@ import urllib.parse
 import urllib.request
 
 REPO = "DXBbyd/CKeyViewer"
-TAG = os.environ.get("TAG", "v1.0.0")
-VERSION = "1.0.0"
+TAG = os.environ.get("TAG", "v1.1.0")
+VERSION = "1.1.0"
 RELEASE_NAME = os.environ.get("RELEASE_NAME", "CKeyViewer " + VERSION)
 TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
 
