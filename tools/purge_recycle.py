@@ -56,16 +56,29 @@ def parse_i(path):
         return None
 
 
-def in_scope(orig):
-    return any(p in orig for p in PREFIXES)
+def in_scope(orig, prefixes):
+    return any(p in orig for p in prefixes)
 
 
 def main():
     dry = "--dry-run" in sys.argv
+
+    # 默认只清本次清理动过的三类 C 盘路径。
+    # E 盘删构建产物时条目落在 E:\$Recycle.Bin、路径形态不同，用 --prefix 追加：
+    #   python tools/purge_recycle.py --prefix "\Keyviever\setup\bin"
+    prefixes = list(PREFIXES)
+    for i, a in enumerate(sys.argv):
+        if a == "--prefix" and i + 1 < len(sys.argv):
+            prefixes.append(sys.argv[i + 1].replace("/", "\\"))
+
     freed = 0
     hit = 0
     skipped = 0
     errors = []
+
+    print("清理范围（原始路径含以下任一）：")
+    for p in prefixes:
+        print("   ", p)
 
     for drive in ("C", "E", "D"):
         root = drive + ":\\$Recycle.Bin"
@@ -76,7 +89,7 @@ def main():
                 continue
             for meta in glob.glob(os.path.join(sid, "$I*")):
                 parsed = parse_i(meta)
-                if not parsed or not in_scope(parsed[0]):
+                if not parsed or not in_scope(parsed[0], prefixes):
                     skipped += 1
                     continue
                 payload = os.path.join(sid, "$R" + os.path.basename(meta)[2:])
