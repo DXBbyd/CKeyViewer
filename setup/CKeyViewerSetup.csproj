@@ -27,8 +27,9 @@
     <AssemblyTitle>CKeyViewer 安装程序</AssemblyTitle>
     <Product>CKeyViewer</Product>
     <Company>DXBbyd</Company>
+    <Authors>DXBbyd</Authors>
     <Description>CKeyViewer 按键可视化覆盖层 —— 安装 / 卸载程序</Description>
-    <Copyright>Copyright © 2026 DXBbyd</Copyright>
+    <Copyright>Copyright © 2026 DXBbyd · QQ 3157037483</Copyright>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
@@ -39,6 +40,11 @@
     <EmbeddedResource Include="payload\CKeyViewer.exe"
                       LogicalName="CKeyViewerSetup.payload"
                       Condition="Exists('payload\CKeyViewer.exe')" />
+
+    <!-- 作者头像（安装程序左下角的小圆头像）—— 与主程序用同一张图 -->
+    <EmbeddedResource Include="..\CKeyViewer\assets\avatar96.png"
+                      LogicalName="CKeyViewerSetup.avatar.png"
+                      Condition="Exists('..\CKeyViewer\assets\avatar96.png')" />
   </ItemGroup>
 
 </Project>

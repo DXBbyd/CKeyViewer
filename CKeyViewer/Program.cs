@@ -55,9 +55,10 @@ namespace CKeyViewer
                 var window = new OverlayWindow();
                 var host = new KvHost(window, store);
 
-                // 设置窗口按需创建，关闭时只隐藏不销毁
+                // 设置窗口按需创建，关闭时只隐藏不销毁。
+                // 传 -1 保持当前标签页，传具体下标则跳过去（托盘的「关于」用 11）。
                 KvSettingsWindow settings = null;
-                Action openSettings = () =>
+                Action<int> openSettings = tab =>
                 {
                     try
                     {
@@ -75,6 +76,8 @@ namespace CKeyViewer
                             settings.Activate();
                             settings.Focus();
                         }
+
+                        if (tab >= 0) settings.SelectTab(tab);
                     }
                     catch (Exception ex)
                     {
@@ -85,7 +88,7 @@ namespace CKeyViewer
                 var hotkeys = new KvHotkeys(window);
                 hotkeys.Toggle += () => host.ToggleVisible();
                 hotkeys.Reset += () => host.ResetCounts();
-                hotkeys.Settings += () => openSettings();
+                hotkeys.Settings += () => openSettings(-1);
                 hotkeys.NextProfile += () => host.SwitchNextProfile();
                 hotkeys.ToggleLayout += () => host.ToggleLayoutMode();
 
@@ -104,6 +107,28 @@ namespace CKeyViewer
                 hotkeys.Attach();
 
                 Core.Diag.Log("config = " + store.ProfilePath(store.CurrentProfile));
+
+#if DEBUG
+                // 截图 / 调试用：直接打开设置面板，省得发模拟按键去抢用户的键盘。
+                // 值 = 标签页下标，-1 表示沿用上次记住的那一页。Release 里整段被编译掉。
+                string autoSettings = Environment.GetEnvironmentVariable("CKV_OPEN_SETTINGS");
+                if (!string.IsNullOrEmpty(autoSettings))
+                {
+                    int tab;
+                    if (!int.TryParse(autoSettings, out tab)) tab = -1;
+                    var t = new System.Windows.Threading.DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromSeconds(4)
+                    };
+                    t.Tick += (s, e) =>
+                    {
+                        t.Stop();
+                        Core.Diag.Log("auto-open settings tab=" + tab);
+                        openSettings(tab);
+                    };
+                    t.Start();
+                }
+#endif
 
                 app.Run();
                 Core.Diag.Log("app.Run returned");

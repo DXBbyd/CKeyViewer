@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
@@ -22,7 +23,7 @@ namespace CKeyViewer.Setup
         private TextBox _dir;
         private Button _browse;
         private CheckBox _desktop, _startMenu, _admin, _migrate, _keepConfig, _runNow;
-        private Label _lblDir, _hint;
+        private Label _lblDir, _hint, _author;
         private ProgressBar _bar;
         private Label _status;
         private Button _primary, _cancel;
@@ -156,6 +157,28 @@ namespace CKeyViewer.Setup
                 FlatStyle = FlatStyle.System
             };
             Controls.Add(_runNow);
+
+            // 作者信息占着左下角；装完之后那里要让给「立即运行」
+            Bitmap avatar = LoadAvatar(20);
+            if (avatar != null)
+            {
+                var pic = new PictureBox
+                {
+                    Left = 18, Top = 313, Width = 20, Height = 20,
+                    Image = avatar, SizeMode = PictureBoxSizeMode.StretchImage,
+                    BackColor = Color.Transparent
+                };
+                Controls.Add(pic);
+            }
+
+            _author = new Label
+            {
+                Left = avatar != null ? 44 : 18, Top = 315, Width = 230, Height = 18,
+                ForeColor = Muted, Font = new Font(UiFont.FontFamily, 8.5f),
+                Text = "作者 " + AppInfo.Author + "  ·  QQ " + AppInfo.AuthorQQ
+                     + "  ·  v" + AppInfo.Version
+            };
+            Controls.Add(_author);
 
             _primary = new Button { Left = 254, Top = 308, Width = 92, Height = 30, Text = "安装", FlatStyle = FlatStyle.System };
             _primary.Click += OnPrimary;
@@ -354,8 +377,42 @@ namespace CKeyViewer.Setup
             _bar.Value = 100;
             _primary.Text = "完成";
             _primary.Enabled = true;
+            _author.Visible = false;
             _runNow.Visible = true;
             _cancel.Visible = false;
+        }
+
+        /// <summary>
+        /// 读嵌入的作者头像并裁成圆形。<c>PictureBox</c> 不会自己圆角，
+        /// 所以先在内存里用 <see cref="GraphicsPath"/> 剪一次。
+        /// </summary>
+        private static Bitmap LoadAvatar(int size)
+        {
+            try
+            {
+                using (Stream s = typeof(MainForm).Assembly
+                           .GetManifestResourceStream("CKeyViewerSetup.avatar.png"))
+                {
+                    if (s == null) return null;
+                    using (Image src = Image.FromStream(s))
+                    {
+                        var bmp = new Bitmap(size, size);
+                        using (Graphics g = Graphics.FromImage(bmp))
+                        {
+                            g.SmoothingMode = SmoothingMode.AntiAlias;
+                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                            using (var path = new GraphicsPath())
+                            {
+                                path.AddEllipse(0, 0, size, size);
+                                g.SetClip(path);
+                                g.DrawImage(src, new Rectangle(0, 0, size, size));
+                            }
+                        }
+                        return bmp;
+                    }
+                }
+            }
+            catch { return null; }
         }
 
         /// <summary>优先用「微软雅黑 UI」，没有就退回系统默认，避免中文糊成方块。</summary>

@@ -4,6 +4,8 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 
 配置格式与 [JipperKeyViewer](https://github.com/adofaiex/JipperKeyViewer)（作者 HitMargin，下称 jipper）**双向兼容**：原版的 `config` 目录可以直接拷过来用，改完也能拿回去。
 
+> 作者 **DXBbyd** · QQ `3157037483` · 仓库 <https://github.com/DXBbyd/CKeyViewer>
+
 ![覆盖层](docs/screenshots/01-overlay.png)
 
 > 按住 A / S / D：键帽高亮为白底、雨线从键帽上方升起，每个键下方是累计点击次数，底部是 KPS 与 Total。
@@ -25,7 +27,7 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 | **统计** | KPS 实时速率、Total 累计总数、每键计数；支持居中 / 堆叠 / 独立位置 |
 | **自由布局** | 每个元素是一个可拖拽的「节点」，位置 / 尺寸 / 层级 / 配色 / 按键绑定全可调，支持图层组与图片节点；**在覆盖层上直接拖动摆放** |
 | **档案** | 多档案热切换，与 jipper 的 `profiles/*.json` 一一对应 |
-| **界面** | 深色设置面板（11 个标签页），改动即时生效 + 防抖落盘；系统托盘；5 组全局热键（带备选） |
+| **界面** | 深色设置面板（12 个标签页，含「关于」），改动即时生效 + 防抖落盘；系统托盘；5 组全局热键（带备选） |
 | **安装** | 单文件 `CKeyViewerSetup.exe`，装到用户目录、建快捷方式、**默认以管理员运行**，可从「设置 → 应用」卸载 |
 
 ![设置面板](docs/screenshots/02-settings.png)
@@ -77,6 +79,32 @@ CKeyViewerSetup.exe --silent --launch                         # 装完直接启�
 > 写在这个位置的好处是：快捷方式和直接双击 exe 都会提权。
 >
 > 卸载会把这个值一并清掉。
+
+### 装不上 / 打不开？
+
+双击后没反应、窗口闪一下就没、或者干脆什么都没发生 —— 按这个顺序排查：
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 蓝框「Windows 已保护你的电脑」 | 未签名 + 文件带了「来自 Internet」标记 | 点 **更多信息 → 仍要运行** |
+| 双击完全没反应，进程秒退 | 所在目录被执行策略 / 工作区管控限制 | **把 exe 拷到普通目录**（如 `D:\CKeyViewer\`）再运行 |
+| 被 Defender / 360 / 火绒拦下 | 未签名的自包含单文件容易被误判 | 加信任，或用 ZIP 便携版 |
+| 双击后要等十几秒才出窗口 | 首次运行要解包自带的 .NET 运行时 | 正常现象，之后启动就快了 |
+| 弹出「请使用管理员运行此程序」 | 没提权（见下一节） | 右键 → 以管理员身份运行；用安装程序装的话会自动提权 |
+
+想看到确切的错误码，用命令行启动：
+
+```bat
+CKeyViewerSetup.exe
+echo 退出码 %errorlevel%
+```
+
+常见的无声退出码：
+
+| 退出码 | 含义 |
+| --- | --- |
+| `0x800080A0` | 当前目录被执行策略拦住了 —— 换个目录（例如 `E:\CKeyViewer\`）再试 |
+| `0xE0434352` | .NET 未处理异常 —— 同级目录下会留下 `ckv_setup_error.log`，里面是堆栈 |
 
 ---
 
@@ -216,8 +244,9 @@ CKeyViewer.exe --selftest D:\out.txt
 
 ### 设置面板
 
-11 个标签页：**档案 / 布局 / 自由布局 / 外观 / 文字 / 雨线 / 按键绑定 / 每键配色 / 按压动画 / 统计 / 热键信息**。
+12 个标签页：**档案 / 布局 / 自由布局 / 外观 / 文字 / 雨线 / 按键绑定 / 每键配色 / 按压动画 / 统计 / 热键信息 / 关于**。
 所有改动即时生效，600 ms 防抖后写入磁盘；面板会记住上次停留的标签页。
+托盘菜单的「关于 CKeyViewer…」会直接跳到最后一页。
 
 ---
 
@@ -345,13 +374,14 @@ CanvasWidth = 1080 * ScreenWidth / ScreenHeight
 ```
 CKeyViewer/                    主程序
 ├─ Program.cs              装配：窗口 + 托盘 + 热键 + 设置面板（`--selftest` 无界面自检入口）
+├─ About.cs                作者 / 版本 / QQ / 仓库地址 + 嵌入头像的读取
 ├─ Admin.cs                管理员权限检查 + 非管理员弹窗后退出
 ├─ SelfTest.cs             按键捕获的逻辑自检（假按键状态，不碰真实键鼠）
 ├─ OverlayWindow.cs        透明置顶 + 鼠标穿透 + Win32 扩展样式
 ├─ KvHost.cs               主循环：输入捕获、按键状态、统计、雨线驱动、防抖落盘、布局模式拖动
 ├─ KvTray.cs               托盘图标与菜单（读嵌入资源 CKeyViewer.app.ico）
 ├─ KvHotkeys.cs            全局热键（主选 + 备选）
-├─ KvSettingsWindow.cs     深色设置面板（11 个标签页，含自由布局编辑器）
+├─ KvSettingsWindow.cs     深色设置面板（12 个标签页，含自由布局编辑器与关于页）
 ├─ Core/
 │  ├─ KvGeometry.cs        8 种主键 + 8 种脚键的布局几何表
 │  ├─ KvProfile.cs         202 项配置模型 + 自由布局辅助（节点增删 / 图层组 / 排序过滤）
@@ -369,6 +399,7 @@ CKeyViewer/                    主程序
 ├─ Native/Win32.cs         P/Invoke
 ├─ icon/icon.png           图标源图（1254×1254）
 └─ assets/app.ico          应用图标（tools/makeicon.py 从 icon.png 生成 9 档）
+   assets/avatar.png       作者头像（256×256，设置面板「关于」页）
 
 setup/                         安装程序
 ├─ Program.cs              入口（静默 / 带界面、全局异常兜底）
@@ -408,6 +439,7 @@ tools/                         开发辅助脚本
 | `drag.py` / `scroll.py` | 模拟鼠标拖动 / 滚轮（验证覆盖层拖动与设置面板滚动） |
 | `sendchord.py` / `click.py` | 发送组合键 / 屏幕坐标点击（自动化 UI） |
 | `settingsshot.py` | 指定标签页启动设置面板，按日志里的窗口矩形精确裁剪 |
+| `appshot.py` | 同上，但走 Debug 构建的 `CKV_OPEN_SETTINGS` 自动进页面 —— **不发模拟按键**，用 `PrintWindow` 抓图 |
 | `migrate_config.py` | 把一个安装目录的 `config/` 迁移到另一个（迁移前务必先关掉目标目录里的程序） |
 | `admintest.py` | 验证「非管理员 → 弹窗 + 终止进程」；只枚举窗口与截屏，**不发送任何键鼠输入** |
 | `customuitest.py` | 「自由布局」设置页交互回归（滚动 + 点击 + 异常扫描） |
@@ -454,6 +486,24 @@ python tools/migrate_config.py <源目录> <目标目录>
 用[安装程序](#安装)的话还有一条更省事的路：把 `config/` 放在 `setup.exe` **隔壁**再运行安装程序，
 它会自动带进安装目录（同名文件备份成 `*.before-install`）。
 安装程序的界面上也能看到「迁移 setup.exe 旁边的 config /」这个勾选项。
+
+---
+
+## 关于
+
+![关于页](docs/screenshots/12-about.png)
+
+设置面板的最后一页就是「关于」：作者头像、QQ、仓库地址、版本号、上游项目与声明，都在这里。
+托盘菜单的「关于 CKeyViewer…」可以直接跳过去。
+
+<img src="docs/avatar.png" width="112" alt="作者头像">
+
+| | |
+| --- | --- |
+| 作者 | **DXBbyd** |
+| QQ | `3157037483` |
+| 仓库 | <https://github.com/DXBbyd/CKeyViewer> |
+| 版本 | 1.0.0（`CKeyViewer.exe --selftest` 会打印映射表，界面标题栏也带版本号） |
 
 ---
 

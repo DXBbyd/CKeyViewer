@@ -10,6 +10,8 @@ namespace CKeyViewer.Setup
         public const string DisplayName = "CKeyViewer 按键可视化覆盖层";
         public const string Version = "1.0.0";
         public const string Publisher = "DXBbyd";
+        public const string Author = "DXBbyd";
+        public const string AuthorQQ = "3157037483";
         public const string Url = "https://github.com/DXBbyd/CKeyViewer";
 
         public const string AppExeName = "CKeyViewer.exe";

@@ -12,11 +12,11 @@ namespace CKeyViewer
     {
         private readonly NotifyIcon _icon;
         private readonly KvHost _host;
-        private readonly Action _openSettings;
+        private readonly Action<int> _openSettings;
         private readonly Action _exit;
         private Icon _generated;
 
-        public KvTray(KvHost host, Action openSettings, Action exit)
+        public KvTray(KvHost host, Action<int> openSettings, Action exit)
         {
             _host = host;
             _openSettings = openSettings;
@@ -27,7 +27,7 @@ namespace CKeyViewer
 
             _icon = new NotifyIcon
             {
-                Text = "CKeyViewer —— 按键可视化覆盖层",
+                Text = About.ProductName + " " + About.Version + " —— 按键可视化覆盖层",
                 Visible = true,
                 ContextMenuStrip = BuildMenu()
             };
@@ -71,7 +71,7 @@ namespace CKeyViewer
         {
             var menu = new ContextMenuStrip();
 
-            var title = new ToolStripMenuItem("CKeyViewer") { Enabled = false };
+            var title = new ToolStripMenuItem(About.TitleWithVersion + "  ·  " + About.Author) { Enabled = false };
             menu.Items.Add(title);
             menu.Items.Add(new ToolStripSeparator());
 
@@ -109,8 +109,12 @@ namespace CKeyViewer
             menu.Items.Add(new ToolStripSeparator());
 
             var settings = new ToolStripMenuItem("设置…\tCtrl+Alt+S");
-            settings.Click += (s, e) => _openSettings();
+            settings.Click += (s, e) => _openSettings(-1);
             menu.Items.Add(settings);
+
+            var about = new ToolStripMenuItem("关于 CKeyViewer…");
+            about.Click += (s, e) => _openSettings(KvSettingsWindow.AboutTab);
+            menu.Items.Add(about);
 
             var openCfg = new ToolStripMenuItem("打开配置目录");
             openCfg.Click += (s, e) => OpenConfigFolder();

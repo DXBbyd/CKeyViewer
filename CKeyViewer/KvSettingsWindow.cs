@@ -32,9 +32,19 @@ namespace CKeyViewer
         /// <summary>「自由布局」标签页的下标（拖动模式与主机状态联动时用到）。</summary>
         private const int CustomTab = 2;
 
+        /// <summary>「关于」标签页的下标（托盘菜单跳转用）。</summary>
+        public const int AboutTab = 11;
+
+        /// <summary>切到指定标签页（会走正常的选中流程，连带落盘 UiTab）。</summary>
+        public void SelectTab(int index)
+        {
+            if (index < 0 || index >= Tabs.Length) return;
+            _nav.SelectedIndex = index;
+        }
+
         private static readonly string[] Tabs =
         {
-            "档案", "布局", "自由布局", "外观", "文字", "雨线", "按键绑定", "每键配色", "按压动画", "统计", "热键信息"
+            "档案", "布局", "自由布局", "外观", "文字", "雨线", "按键绑定", "每键配色", "按压动画", "统计", "热键信息", "关于"
         };
 
         private KvProfile P => _host.P;
@@ -80,7 +90,7 @@ namespace CKeyViewer
             headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             var titleStack = new StackPanel();
-            _title = Kit.Text2("CKeyViewer", 15, Kit.Text, bold: true);
+            _title = Kit.Text2(About.TitleWithVersion, 15, Kit.Text, bold: true);
             titleStack.Children.Add(_title);
             _status = Kit.Text2("", 11.5, Kit.Sub);
             titleStack.Children.Add(_status);
@@ -264,6 +274,7 @@ namespace CKeyViewer
                     case 7: BuildPerKey(panel); break;
                     case 8: BuildAnimation(panel); break;
                     case 9: BuildStats(panel); break;
+                    case 11: BuildAbout(panel); break;
                     default: BuildInfo(panel); break;
                 }
             }
@@ -1403,11 +1414,10 @@ namespace CKeyViewer
 
             p.Children.Add(Kit.Section("关于"));
             p.Children.Add(Kit.Hint(
-                "CKeyViewer —— 复刻 Jipper/JipperKeyViewer 的按键可视化覆盖层。\r\n" +
-                "配置格式与 jipper 完全兼容：config/settings.json 与 config/profiles/<名称>.json，\r\n" +
-                "首次启动会自动从相邻的 jipper/config 迁移原有档案。\r\n\r\n" +
-                "渲染模型与原版一致：参考画布高度恒为 1080 单位，Size 是整体缩放，\r\n" +
-                "位置使用 0..1 归一化坐标。"));
+                "作者、版本、仓库地址与头像在左侧「关于」页。\r\n" +
+                "本程序复刻 Jipper/JipperKeyViewer 的按键可视化覆盖层，" +
+                "配置格式与原版完全兼容：config/settings.json 与 config/profiles/<名称>.json，" +
+                "首次启动会自动从相邻的 jipper/config 迁移原有档案。"));
 
             p.Children.Add(Kit.Section("程序信息"));
             p.Children.Add(Kit.Hint(string.Format(
@@ -1415,6 +1425,92 @@ namespace CKeyViewer
                 _host.Store.ProfilePath(_host.Store.CurrentProfile),
                 typeof(KvSettingsWindow).Assembly.GetName().Version,
                 _host.DpiScale, ActualWidth, ActualHeight)));
+        }
+
+        // ---- 11. 关于 ----
+
+        private void BuildAbout(Panel p)
+        {
+            p.Children.Add(Kit.Section("作者"));
+
+            // 圆形头像 + 右侧文字
+            var avatar = new Border
+            {
+                Width = 96,
+                Height = 96,
+                CornerRadius = new CornerRadius(48),
+                BorderBrush = Kit.Border,
+                BorderThickness = new Thickness(1),
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            System.Windows.Media.Imaging.BitmapImage bmp = About.LoadAvatar();
+            if (bmp != null)
+            {
+                avatar.Background = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+            }
+            else
+            {
+                // 资源没读出来也别留个空洞，画个首字母占位
+                avatar.Background = Kit.PanelAlt;
+                var fallback = Kit.Text2("D", 34, Kit.Sub, bold: true,
+                    align: TextAlignment.Center);
+                fallback.VerticalAlignment = VerticalAlignment.Center;
+                avatar.Child = fallback;
+            }
+
+            var info = new StackPanel
+            {
+                Margin = new Thickness(16, 2, 0, 0),
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            info.Children.Add(Kit.Text2(About.Author, 19, Kit.Text, bold: true));
+            info.Children.Add(Kit.Text2("QQ  " + About.QQ, 12.5, Kit.Sub));
+            info.Children.Add(Kit.Text2("仓库  " + About.RepoUrl, 12, Kit.Sub));
+
+            var head = new StackPanel { Orientation = Orientation.Horizontal };
+            head.Children.Add(avatar);
+            head.Children.Add(info);
+            p.Children.Add(head);
+
+            p.Children.Add(Kit.HRow(
+                Kit.Button("复制 QQ 号", () =>
+                {
+                    try { Clipboard.SetText(About.QQ); }
+                    catch (Exception ex) { Diag.Log("clipboard: " + ex.Message); }
+                }),
+                Kit.Button("打开仓库", () => About.OpenUrl(About.RepoUrl), accent: true),
+                Kit.Button("检查更新", () => About.OpenUrl(About.ReleasesUrl))
+            ));
+
+            p.Children.Add(Kit.Section("版本"));
+            p.Children.Add(Kit.Hint(string.Format(
+                "{0}  ——  版本 {1}\r\n" +
+                "配置格式参照 {2}（作者 {3}）：{4}\r\n" +
+                "渲染模型与原版一致：参考画布高度恒为 1080 单位，Size 是整体缩放，位置用 0..1 归一化坐标。",
+                About.ProductName, About.Version,
+                About.UpstreamName, About.UpstreamAuthor, About.UpstreamUrl)));
+
+            p.Children.Add(Kit.HRow(
+                Kit.Button("打开上游项目", () => About.OpenUrl(About.UpstreamUrl)),
+                Kit.Button("MIT 许可", () => About.OpenUrl(About.RepoUrl + "/blob/main/LICENSE"))
+            ));
+
+            p.Children.Add(Kit.Section("声明"));
+            p.Children.Add(Kit.Hint(
+                "本项目是一个独立实现，不是 JipperKeyViewer 的官方版本，与原版作者无隶属关系。\r\n" +
+                "配置模型刻意对齐原版，只是为了让已有档案（按键计数 / 配色 / 自由布局）能继续使用 ——\r\n" +
+                "这是为互操作性做的格式兼容。本程序是独立进程，原版则是游戏内 Mod，实现方式完全不同。\r\n" +
+                "仓库内不包含原版的任何二进制、反编译代码或美术资源。"));
+
+            p.Children.Add(Kit.Section("运行信息"));
+            p.Children.Add(Kit.Hint(string.Format(
+                "配置文件：{0}\r\n进程架构：{1}    DPI 缩放：{2:0.###}\r\n" +
+                "累计按键：{3:N0}    KPS：{4}    活跃雨线：{5}",
+                _host.Store.ProfilePath(_host.Store.CurrentProfile),
+                Environment.Is64BitProcess ? "x64" : "x86",
+                _host.DpiScale,
+                _host.TotalCount, _host.TotalKps, _host.Rain.ActiveCount)));
         }
 
         // ---------------------------------------------------------------
