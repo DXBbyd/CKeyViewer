@@ -1,0 +1,23 @@
+# 本仓库在 Windows 上开发，core.autocrlf=true。
+# 那对 .cs / .md 无所谓，但对 **shell 脚本是致命的**：
+# CRLF 会让 shebang 变成 `#!/usr/bin/env bash\r`，bash 直接报
+# `bad interpreter: ...\r`。tools/env.sh、tools/build_setup.sh 都是 bash 写的，
+# 必须强制 LF。
+
+*.sh text eol=lf
+
+# 二进制资源：禁止任何换行转换，否则 diff 会把文件搞坏
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.mp4 binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pdb binary
+*.so binary
+*.ttf binary
+*.otf binary
