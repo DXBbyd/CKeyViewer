@@ -128,6 +128,24 @@ namespace CKeyViewer
                     };
                     t.Start();
                 }
+
+                // 截图 / 调试用：直接进布局模式（覆盖层 + 信息层都画出来）。
+                // 不用发 Ctrl+Alt+L —— 用户自己那份实例会先抢到这个热键。
+                string autoLayout = Environment.GetEnvironmentVariable("CKV_LAYOUT");
+                if (!string.IsNullOrEmpty(autoLayout))
+                {
+                    var t2 = new System.Windows.Threading.DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromSeconds(3)
+                    };
+                    t2.Tick += (s, e) =>
+                    {
+                        t2.Stop();
+                        Core.Diag.Log("auto layout mode on");
+                        host.SetLayoutMode(true, "CKV_LAYOUT");
+                    };
+                    t2.Start();
+                }
 #endif
 
                 app.Run();

@@ -16,27 +16,64 @@ namespace CKeyViewer.Ui
     /// </summary>
     internal static class Kit
     {
-        // ---- 配色 ----
-        public static readonly Brush Bg = Freeze("#1C1922");
-        public static readonly Brush Panel = Freeze("#252131");
-        public static readonly Brush PanelAlt = Freeze("#2E2939");
-        public static readonly Brush Sidebar = Freeze("#211D2B");
-        public static readonly Brush Border = Freeze("#3B3549");
-        public static readonly Brush Text = Freeze("#E9E5F2");
-        public static readonly Brush Sub = Freeze("#9B94AB");
-        public static readonly Brush Accent = Freeze("#9B4DFF");
-        public static readonly Brush AccentDim = Freeze("#3A2B52");
+        // ---- 配色（iOS 风格，浅色 / 深色两套，运行时可切）----
 
-        public const double RowHeight = 30;
+        private static KvPalette _palette = KvPalette.Dark;
+        private static readonly Dictionary<string, Brush> BrushCache = new Dictionary<string, Brush>();
 
-        private static Brush Freeze(string hex)
+        /// <summary>当前调色板。</summary>
+        public static KvPalette Palette => _palette;
+
+        /// <summary>当前是不是深色。</summary>
+        public static bool IsDark => _palette.IsDark;
+
+        /// <summary>
+        /// 主题变了。已经建好的控件不会自己换色（画刷是冻结的），
+        /// 所以监听方要负责重建界面 —— 设置面板就是靠这个把整棵树重刷一遍。
+        /// </summary>
+        public static event Action ThemeChanged;
+
+        /// <summary>切换主题；相同主题重复调用是空操作。</summary>
+        public static void UseTheme(bool dark) => UseTheme(KvPalette.For(dark ? "dark" : "light"));
+
+        public static void UseTheme(KvPalette p)
         {
-            var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-            b.Freeze();
-            return b;
+            if (p == null || ReferenceEquals(p, _palette)) return;
+            _palette = p;
+            BrushCache.Clear();
+            try { ThemeChanged?.Invoke(); } catch { }
         }
 
-        private static readonly FontFamily UiFont = new FontFamily("Microsoft YaHei UI, Segoe UI");
+        /// <summary>十六进制 → 冻结画刷（带缓存，别每次访问都新建）。</summary>
+        private static Brush B(string hex)
+        {
+            if (string.IsNullOrEmpty(hex)) return Brushes.Transparent;
+            if (BrushCache.TryGetValue(hex, out var b)) return b;
+            var nb = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+            nb.Freeze();
+            BrushCache[hex] = nb;
+            return nb;
+        }
+
+        private static Brush Freeze(string hex) => B(hex);
+
+        public static Brush Bg => B(_palette.Bg);
+        public static Brush Panel => B(_palette.Card);
+        public static Brush PanelAlt => B(_palette.CardAlt);
+        public static Brush Sidebar => B(_palette.Sidebar);
+        public static Brush Border => B(_palette.Border);
+        public static Brush Separator => B(_palette.Separator);
+        public static Brush Text => B(_palette.Text);
+        public static Brush Sub => B(_palette.Sub);
+        public static Brush Accent => B(_palette.Accent);
+        public static Brush AccentDim => B(_palette.AccentSoft);
+        public static Brush Hover => B(_palette.Hover);
+        public static Brush Danger => B(_palette.Danger);
+        public static Brush DangerSoft => B(_palette.DangerSoft);
+
+        public const double RowHeight = 38;
+
+        internal static readonly FontFamily UiFont = new FontFamily("Microsoft YaHei UI, Segoe UI");
 
         public static TextBlock Text2(string s, double size = 12.5, Brush brush = null,
                                       bool bold = false, TextAlignment align = TextAlignment.Left)
@@ -58,40 +95,55 @@ namespace CKeyViewer.Ui
         // 容器
         // ---------------------------------------------------------------
 
-        /// <summary>分组标题（带一条分隔线）。</summary>
+        /// <summary>标记：这个元素是分组标题，<see cref="WrapGroups"/> 靠它切卡片。</summary>
+        internal const string TagSection = "kv:section";
+
+        /// <summary>标记：这个元素是一行列表项，卡片内部会在相邻两行之间插分隔线。</summary>
+        internal const string TagRow = "kv:row";
+
+        /// <summary>
+        /// 分组标题。iOS 的分组列表里标题在卡片**外面**、字号小、颜色灰，
+        /// 所以这里不再用强调色 + 分隔线的旧样式；真正把它和下面几行包成一张卡片的是
+        /// <see cref="WrapGroups"/>。
+        /// </summary>
         public static FrameworkElement Section(string title)
         {
-            var grid = new Grid { Margin = new Thickness(0, 14, 0, 6) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var t = Text2(title, 13, Accent, bold: true);
-            Grid.SetColumn(t, 0);
-            grid.Children.Add(t);
-
-            var line = new Border
-            {
-                Height = 1,
-                Background = Border,
-                Margin = new Thickness(10, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(line, 1);
-            grid.Children.Add(line);
-
-            return grid;
+            var t = Text2(title, 12.5, Sub, bold: false);
+            t.Margin = new Thickness(4, 18, 0, 6);
+            t.Tag = TagSection;
+            return t;
         }
 
-        /// <summary>左侧标签 + 右侧控件的标准行。</summary>
+        /// <summary>页面大标题 —— iOS 那种「大标题 + 说明」的顶部区。</summary>
+        public static FrameworkElement LargeTitle(string title, string subtitle = null)
+        {
+            var sp = new StackPanel { Margin = new Thickness(4, 0, 0, 4) };
+            var t = Text2(title, 21, Text, bold: true);
+            sp.Children.Add(t);
+            if (!string.IsNullOrEmpty(subtitle))
+            {
+                var s = Text2(subtitle, 12, Sub);
+                s.Margin = new Thickness(0, 3, 0, 0);
+                s.TextWrapping = TextWrapping.Wrap;
+                sp.Children.Add(s);
+            }
+            return sp;
+        }
+
+        /// <summary>
+        /// 左侧标签 + 右侧控件的标准行。iOS 的列表行是「标签用主文字色」而不是灰色，
+        /// 这里跟着改，浅色下才不会一片灰糊。
+        /// </summary>
         public static FrameworkElement Row(string label, UIElement ctrl, double labelWidth = 168)
         {
-            var grid = new Grid { Margin = new Thickness(0, 3, 0, 3), MinHeight = RowHeight };
+            var grid = new Grid { MinHeight = RowHeight, Height = double.NaN, Background = Brushes.Transparent };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(labelWidth) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            var t = Text2(label, 12.5, Sub);
+            var t = Text2(label, 13, Text);
             t.VerticalAlignment = VerticalAlignment.Center;
             t.Margin = new Thickness(0, 0, 8, 0);
+            t.TextWrapping = TextWrapping.Wrap;
             Grid.SetColumn(t, 0);
             grid.Children.Add(t);
 
@@ -99,16 +151,328 @@ namespace CKeyViewer.Ui
             Grid.SetColumn(ctrl, 1);
             grid.Children.Add(ctrl);
 
+            grid.Tag = TagRow;
             return grid;
+        }
+
+        /// <summary>把一段内容包成 iOS 的分组卡片（白/深灰底 + 圆角 + 内缩）。</summary>
+        public static Border Card(params UIElement[] children)
+        {
+            var sp = new StackPanel();
+            for (int i = 0; i < children.Length; i++)
+            {
+                if (i > 0 && IsRow(children[i - 1]) && IsRow(children[i]))
+                    sp.Children.Add(RowSeparator());
+                sp.Children.Add(children[i]);
+            }
+
+            return new Border
+            {
+                Background = Panel,
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(14, 6, 14, 6),
+                Margin = new Thickness(0, 0, 0, 2),
+                Child = sp
+            };
+        }
+
+        internal static bool IsSection(UIElement e) =>
+            e is FrameworkElement fe && fe.Tag is string s && s == TagSection;
+
+        internal static bool IsRow(UIElement e) =>
+            e is FrameworkElement fe && fe.Tag is string s && s == TagRow;
+
+        /// <summary>卡片内部两行之间的细分隔线（左侧留出内缩，跟 iOS 一致）。</summary>
+        public static Border RowSeparator()
+        {
+            return new Border
+            {
+                Height = 1,
+                Background = Separator,
+                Margin = new Thickness(0, 0, 0, 0)
+            };
+        }
+
+        /// <summary>
+        /// 把「分组标题 + 它下面的一串行」重组成「标题 + 一张圆角卡片」。
+        ///
+        /// 为什么要做这个后处理而不是改每个页面的写法：设置面板有 13 个页面、几百行
+        /// <c>p.Children.Add(Kit.Xxx(...))</c>，逐处改成 Kit.Group(...) 改动面太大、
+        /// 也容易漏。这里在页面构建完之后统一扫一遍，调用点一行都不用动。
+        /// </summary>
+        public static void WrapGroups(Panel panel)
+        {
+            if (panel == null) return;
+
+            var flat = new List<UIElement>();
+            foreach (UIElement c in panel.Children) flat.Add(c);
+            panel.Children.Clear();
+
+            var bucket = new List<UIElement>();
+
+            void Flush()
+            {
+                if (bucket.Count == 0) return;
+                panel.Children.Add(Card(bucket.ToArray()));
+                bucket.Clear();
+            }
+
+            foreach (var c in flat)
+            {
+                if (IsSection(c)) { Flush(); panel.Children.Add(c); continue; }
+                if (IsRow(c)) { bucket.Add(c); continue; }
+
+                // 提示文字 / 错误信息 / 自定义块：打断卡片，自己单独成段。
+                // iOS 的分组列表里说明文字本来就是卡片**外面**的脚注，放进去反而怪。
+                Flush();
+                if (c is FrameworkElement fe) fe.Margin = new Thickness(4, 6, 4, 10);
+                panel.Children.Add(c);
+            }
+            Flush();
+        }
+
+        /// <summary>
+        /// iOS 分段控件（Segmented Control）—— 一排等宽按钮，选中的用白/深灰底浮起。
+        /// 用来替代一些「只有两三个选项」的下拉，比下拉菜单直观得多。
+        /// </summary>
+        public static FrameworkElement Segmented(IList<string> items, Func<int> get, Action<int> set,
+                                                 double width = 240, double height = 32)
+        {
+            var outer = new Border
+            {
+                Background = PanelAlt,
+                CornerRadius = new CornerRadius(9),
+                Padding = new Thickness(2),
+                Width = width,
+                Height = height,
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+
+            int n = Math.Max(1, items.Count);
+
+            // 列定义必须建在**真正装控件的那一层**上。上一版建在了一个没被使用的 Grid 上，
+            // 结果所有按钮都堆在第 0 列、互相盖住。
+            var layer = new Grid();
+            for (int k = 0; k < n; k++)
+                layer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var slide = new TranslateTransform(0, 0);
+            var pill = new Border
+            {
+                Width = 0,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = B(_palette.SegmentOn),
+                CornerRadius = new CornerRadius(7),
+                RenderTransform = slide
+            };
+            layer.Children.Add(pill);
+
+            var texts = new List<TextBlock>();
+            var buttons = new List<Button>();
+
+            void Refresh(bool animate)
+            {
+                int cur = get();
+                if (cur < 0 || cur >= n) return;
+
+                double x = 0;
+                for (int k = 0; k < cur; k++)
+                    x += buttons[k].ActualWidth > 0 ? buttons[k].ActualWidth : (width - 4) / n;
+
+                double wNow = buttons[cur].ActualWidth > 0 ? buttons[cur].ActualWidth : (width - 4) / n;
+
+                pill.Width = wNow;
+                if (animate)
+                {
+                    var anim = new System.Windows.Media.Animation.DoubleAnimation(
+                        slide.X, x, TimeSpan.FromMilliseconds(190))
+                    {
+                        EasingFunction = new System.Windows.Media.Animation.CubicEase
+                        { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
+                    };
+                    slide.BeginAnimation(TranslateTransform.XProperty, anim);
+                }
+                else
+                {
+                    slide.BeginAnimation(TranslateTransform.XProperty, null);
+                    slide.X = x;
+                }
+
+                for (int k = 0; k < n; k++)
+                {
+                    texts[k].Foreground = k == cur ? Text : Sub;
+                    texts[k].FontWeight = k == cur ? FontWeights.SemiBold : FontWeights.Normal;
+                }
+            }
+
+            for (int k = 0; k < n; k++)
+            {
+                int idx = k;
+                var t = Text2(items[idx], 12.5, Sub, align: TextAlignment.Center);
+                var b = new Button
+                {
+                    Content = t,
+                    Background = Brushes.Transparent,
+                    BorderThickness = new Thickness(0),
+                    Padding = new Thickness(0),
+                    Cursor = Cursors.Hand,
+                    Focusable = false
+                };
+                b.Click += (s, e) => { set(idx); Refresh(true); };
+                Grid.SetColumn(b, k);
+                texts.Add(t);
+                buttons.Add(b);
+                layer.Children.Add(b);
+            }
+
+            outer.Child = layer;
+
+            outer.SizeChanged += (s, e) => Refresh(false);
+            // 首次布局完成后才知道每段多宽，所以在 Loaded 里再摆一次药丸
+            outer.Dispatcher.BeginInvoke(new Action(() => Refresh(false)),
+                System.Windows.Threading.DispatcherPriority.Loaded);
+
+            return outer;
+        }
+
+        /// <summary>
+        /// 九宫格吸附选择器。左边一块 3×3 的方格，右边显示当前选中的名字 + 一个「自由」按钮。
+        /// <para>
+        /// 为什么不是下拉框：吸附只有 9 个位置，而且是「空间关系」——
+        /// 摆成九宫格能一眼看出选的是哪个角，下拉框还得逐个读字。
+        /// </para>
+        /// </summary>
+        public static FrameworkElement AnchorPicker(Func<int> get, Action<int> set,
+                                                    double cellW = 42, double cellH = 30)
+        {
+            var wrap = new Grid();
+            wrap.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            wrap.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            wrap.MinHeight = RowHeight;
+
+            var grid = new Grid { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+            for (int r = 0; r < 3; r++)
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (int c = 0; c < 3; c++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var cells = new Border[10];
+            var marks = new Border[10];
+
+            var side = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            var name = Text2("", 13, Text, bold: true);
+            side.Children.Add(name);
+
+            // 先声明后赋值：Refresh() 里要读 freeBtn，而按钮自己的回调又调用 Refresh()。
+            // 写成一个 var 声明的话，编译器会判定「在赋值前就被使用」（CS0165）。
+            Button freeBtn = null;
+            freeBtn = Button("自由摆放", () => { set((int)KvAnchor.Free); Refresh(); }, width: 96);
+            freeBtn.Margin = new Thickness(0, 6, 0, 0);
+            freeBtn.HorizontalAlignment = HorizontalAlignment.Left;
+            side.Children.Add(freeBtn);
+
+            void Refresh()
+            {
+                int cur = KvSnap.Clamp(get());
+                for (int a = 1; a <= 9; a++)
+                {
+                    bool on = a == cur;
+                    cells[a].Background = on ? Accent : PanelAlt;
+                    cells[a].BorderBrush = on ? Accent : Border;
+                    marks[a].Background = on ? Brushes.White : Sub;
+                }
+
+                // 「自由摆放」其实是第 10 个选项，不是「取消」按钮 —— 文案固定四个字
+                // （写成「改为自由摆放」六个字会被 96px 的按钮裁掉尾巴），
+                // 当前状态靠底色点不点亮来区分，和九宫格是同一套视觉语言。
+                bool free = cur == 0;
+                freeBtn.Background = free ? Accent : PanelAlt;
+                freeBtn.BorderBrush = free ? Accent : Border;
+                freeBtn.BorderThickness = new Thickness(free ? 0 : 1);
+                freeBtn.Foreground = free ? Brushes.White : Text;
+
+                name.Text = free ? "当前：自由摆放" : "当前：" + KvSnap.NameOf(cur) + " 吸附";
+            }
+
+            for (int a = 1; a <= 9; a++)
+            {
+                int idx = a;
+                int col = (idx - 1) % 3;
+                int row = (idx - 1) / 3;
+
+                // 格子里画一个「小屏幕 + 落在哪个角的小方块」，一眼就能对上位置。
+                // 屏幕边框原来用 Border + 0.7 透明度，在深色卡上基本看不见，
+                // 整格读起来就是一团灰 —— 换成次要文字色压淡一点，轮廓才立得起来。
+                var mini = new Grid { Width = cellW - 16, Height = cellH - 12 };
+                mini.Children.Add(new Border
+                {
+                    CornerRadius = new CornerRadius(3),
+                    BorderThickness = new Thickness(1),
+                    BorderBrush = Sub,
+                    Opacity = 0.45
+                });
+
+                var mark = new Border
+                {
+                    Width = 10,
+                    Height = 8,
+                    CornerRadius = new CornerRadius(2),
+                    Background = Sub,
+                    HorizontalAlignment = col == 0 ? HorizontalAlignment.Left
+                                      : col == 1 ? HorizontalAlignment.Center
+                                                 : HorizontalAlignment.Right,
+                    VerticalAlignment = row == 0 ? VerticalAlignment.Top
+                                      : row == 1 ? VerticalAlignment.Center
+                                                 : VerticalAlignment.Bottom
+                };
+                marks[idx] = mark;
+                mini.Children.Add(mark);
+
+                var b = new Border
+                {
+                    Width = cellW,
+                    Height = cellH,
+                    Margin = new Thickness(0, 0, 4, 4),
+                    CornerRadius = new CornerRadius(7),
+                    BorderThickness = new Thickness(1),
+                    Background = PanelAlt,
+                    BorderBrush = Border,
+                    Cursor = Cursors.Hand,
+                    Child = mini
+                };
+                b.MouseLeftButtonUp += (s, e) => { set(idx); Refresh(); };
+                Grid.SetRow(b, row);
+                Grid.SetColumn(b, col);
+                cells[idx] = b;
+                grid.Children.Add(b);
+            }
+
+            Grid.SetColumn(grid, 0);
+            Grid.SetColumn(side, 1);
+            wrap.Children.Add(grid);
+            wrap.Children.Add(side);
+
+            Refresh();
+            return wrap;
         }
 
         /// <summary>把若干控件横向排成一行（各自自适应宽度）。</summary>
         public static FrameworkElement HRow(params UIElement[] items)
         {
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            var sp = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                MinHeight = RowHeight,
+                VerticalAlignment = VerticalAlignment.Center,
+                Tag = TagRow
+            };
             foreach (var it in items)
             {
-                if (it is FrameworkElement fe) fe.Margin = new Thickness(0, 0, 8, 0);
+                if (it is FrameworkElement fe)
+                {
+                    fe.Margin = new Thickness(0, 0, 8, 0);
+                    fe.VerticalAlignment = VerticalAlignment.Center;
+                }
                 sp.Children.Add(it);
             }
             return sp;
@@ -127,40 +491,66 @@ namespace CKeyViewer.Ui
         // ---------------------------------------------------------------
 
         /// <summary>
-        /// 深色主题资源。WPF 默认模板里 ComboBox / ListBoxItem / CheckBox 的配色都是写死的，
-        /// 只改属性改不动，所以这里直接替换模板。
+        /// 按当前调色板生成控件模板资源。WPF 默认模板里 ComboBox / ListBoxItem / CheckBox /
+        /// Slider 的配色都是写死的，只改属性改不动，所以这里整套替换。
+        ///
+        /// 用 <c>%%名字%%</c> 占位再替换、而不是 <c>string.Format</c>：XAML 里到处是
+        /// <c>{StaticResource}</c> / <c>{TemplateBinding}</c> 这种花括号，用 Format 会把它们当占位符炸掉。
         /// </summary>
         public static ResourceDictionary Theme()
         {
-            const string xaml = @"
+            var p = _palette;
+            string xaml = XamlTemplate
+                .Replace("%%TEXT%%", p.Text)
+                .Replace("%%SUB%%", p.Sub)
+                .Replace("%%CARD%%", p.Card)
+                .Replace("%%CARD2%%", p.CardAlt)
+                .Replace("%%SIDEBAR%%", p.Sidebar)
+                .Replace("%%BORDER%%", p.Border)
+                .Replace("%%SEP%%", p.Separator)
+                .Replace("%%ACCENT%%", p.Accent)
+                .Replace("%%ACCENT_SOFT%%", p.AccentSoft)
+                .Replace("%%HOVER%%", p.Hover)
+                .Replace("%%DANGER%%", p.Danger)
+                .Replace("%%SWOFF%%", p.SwitchOff)
+                .Replace("%%BG%%", p.Bg);
+
+            return (ResourceDictionary)System.Windows.Markup.XamlReader.Parse(xaml);
+        }
+
+        private const string XamlTemplate = @"
 <ResourceDictionary xmlns=""http://schemas.microsoft.com/winfx/2006/xaml/presentation""
                     xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml"">
 
-  <SolidColorBrush x:Key=""KvText""    Color=""#E9E5F2""/>
-  <SolidColorBrush x:Key=""KvSub""     Color=""#9B94AB""/>
-  <SolidColorBrush x:Key=""KvPanel""   Color=""#252131""/>
-  <SolidColorBrush x:Key=""KvPanel2""  Color=""#2E2939""/>
-  <SolidColorBrush x:Key=""KvBorder""  Color=""#3B3549""/>
-  <SolidColorBrush x:Key=""KvAccent""  Color=""#9B4DFF""/>
-  <SolidColorBrush x:Key=""KvAccent2"" Color=""#3A2B52""/>
+  <SolidColorBrush x:Key=""KvText""    Color=""%%TEXT%%""/>
+  <SolidColorBrush x:Key=""KvSub""     Color=""%%SUB%%""/>
+  <SolidColorBrush x:Key=""KvPanel""   Color=""%%CARD%%""/>
+  <SolidColorBrush x:Key=""KvPanel2""  Color=""%%CARD2%%""/>
+  <SolidColorBrush x:Key=""KvBorder""  Color=""%%BORDER%%""/>
+  <SolidColorBrush x:Key=""KvAccent""  Color=""%%ACCENT%%""/>
+  <SolidColorBrush x:Key=""KvAccent2"" Color=""%%ACCENT_SOFT%%""/>
 
-  <!-- 列表项 -->
+  <!-- 侧边栏选中项：iOS 侧边栏那种圆角药丸 -->
   <Style TargetType=""ListBoxItem"">
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""Padding"" Value=""10,7""/>
-    <Setter Property=""Margin"" Value=""0,1,0,1""/>
+    <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
+    <Setter Property=""FontSize"" Value=""13""/>
+    <Setter Property=""Padding"" Value=""11,7""/>
+    <Setter Property=""Margin"" Value=""3,1,3,1""/>
+    <Setter Property=""Cursor"" Value=""Hand""/>
     <Setter Property=""Template"">
       <Setter.Value>
         <ControlTemplate TargetType=""ListBoxItem"">
-          <Border x:Name=""B"" Background=""Transparent"" CornerRadius=""4"" Padding=""{TemplateBinding Padding}"">
+          <Border x:Name=""B"" Background=""Transparent"" CornerRadius=""8"" Padding=""{TemplateBinding Padding}"">
             <ContentPresenter/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property=""IsMouseOver"" Value=""True"">
-              <Setter TargetName=""B"" Property=""Background"" Value=""#2E2939""/>
+              <Setter TargetName=""B"" Property=""Background"" Value=""%%HOVER%%""/>
             </Trigger>
             <Trigger Property=""IsSelected"" Value=""True"">
-              <Setter TargetName=""B"" Property=""Background"" Value=""#9B4DFF""/>
+              <Setter TargetName=""B"" Property=""Background"" Value=""%%ACCENT_SOFT%%""/>
+              <Setter Property=""Foreground"" Value=""%%ACCENT%%""/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -170,24 +560,25 @@ namespace CKeyViewer.Ui
 
   <!-- 菜单（下拉用） -->
   <Style TargetType=""ContextMenu"">
-    <Setter Property=""Background"" Value=""#252131""/>
-    <Setter Property=""BorderBrush"" Value=""#3B3549""/>
+    <Setter Property=""Background"" Value=""%%CARD%%""/>
+    <Setter Property=""BorderBrush"" Value=""%%BORDER%%""/>
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""Padding"" Value=""2""/>
+    <Setter Property=""Padding"" Value=""4""/>
+    <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
   </Style>
 
   <Style TargetType=""MenuItem"">
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""Padding"" Value=""10,6""/>
+    <Setter Property=""Padding"" Value=""11,7""/>
     <Setter Property=""Template"">
       <Setter.Value>
         <ControlTemplate TargetType=""MenuItem"">
-          <Border x:Name=""B"" Background=""Transparent"" CornerRadius=""3"" Padding=""{TemplateBinding Padding}"">
+          <Border x:Name=""B"" Background=""Transparent"" CornerRadius=""6"" Padding=""{TemplateBinding Padding}"">
             <ContentPresenter ContentSource=""Header""/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property=""IsHighlighted"" Value=""True"">
-              <Setter TargetName=""B"" Property=""Background"" Value=""#3A2B52""/>
+              <Setter TargetName=""B"" Property=""Background"" Value=""%%HOVER%%""/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -195,29 +586,61 @@ namespace CKeyViewer.Ui
     </Setter>
   </Style>
 
-  <!-- 复选框 -->
+  <!-- 开关：iOS 的 UISwitch（标签在左、拨杆在右） -->
   <Style TargetType=""CheckBox"">
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
+    <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
+    <Setter Property=""FontSize"" Value=""13""/>
+    <Setter Property=""Cursor"" Value=""Hand""/>
     <Setter Property=""Template"">
       <Setter.Value>
         <ControlTemplate TargetType=""CheckBox"">
-          <StackPanel Orientation=""Horizontal"" Background=""Transparent"">
-            <Border x:Name=""Box"" Width=""15"" Height=""15"" CornerRadius=""3""
-                    Background=""#2E2939"" BorderBrush=""#3B3549"" BorderThickness=""1""
-                    VerticalAlignment=""Center"">
-              <Path x:Name=""Tick"" Data=""M 2,6 L 5.5,9.5 L 12,2"" Stroke=""White"" StrokeThickness=""2""
-                    Visibility=""Collapsed"" StrokeStartLineCap=""Round"" StrokeEndLineCap=""Round""/>
+          <Grid Background=""Transparent"" MinHeight=""38"">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width=""*""/>
+              <ColumnDefinition Width=""Auto""/>
+            </Grid.ColumnDefinitions>
+            <ContentPresenter Grid.Column=""0"" VerticalAlignment=""Center"" RecognizesAccessKey=""True"" Margin=""0,0,10,0""/>
+            <Border x:Name=""Track"" Grid.Column=""1"" Width=""46"" Height=""28"" CornerRadius=""14""
+                    Background=""%%SWOFF%%"" VerticalAlignment=""Center"">
+              <Ellipse x:Name=""Knob"" Width=""24"" Height=""24"" Fill=""White""
+                       HorizontalAlignment=""Left"" Margin=""2,0,0,0"">
+                <Ellipse.Effect>
+                  <DropShadowEffect BlurRadius=""4"" ShadowDepth=""1"" Opacity=""0.3"" Color=""Black""/>
+                </Ellipse.Effect>
+              </Ellipse>
             </Border>
-            <ContentPresenter Margin=""8,0,0,0"" VerticalAlignment=""Center"" RecognizesAccessKey=""True""/>
-          </StackPanel>
+          </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property=""IsChecked"" Value=""True"">
-              <Setter TargetName=""Box"" Property=""Background"" Value=""#9B4DFF""/>
-              <Setter TargetName=""Box"" Property=""BorderBrush"" Value=""#9B4DFF""/>
-              <Setter TargetName=""Tick"" Property=""Visibility"" Value=""Visible""/>
+              <Setter TargetName=""Track"" Property=""Background"" Value=""%%ACCENT%%""/>
+              <Trigger.EnterActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <ThicknessAnimation Storyboard.TargetName=""Knob"" Storyboard.TargetProperty=""Margin""
+                                        To=""0,0,2,0"" Duration=""0:0:0.16"">
+                      <ThicknessAnimation.EasingFunction>
+                        <CubicEase EasingMode=""EaseOut""/>
+                      </ThicknessAnimation.EasingFunction>
+                    </ThicknessAnimation>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.EnterActions>
+              <Trigger.ExitActions>
+                <BeginStoryboard>
+                  <Storyboard>
+                    <ThicknessAnimation Storyboard.TargetName=""Knob"" Storyboard.TargetProperty=""Margin""
+                                        To=""2,0,0,0"" Duration=""0:0:0.16"">
+                      <ThicknessAnimation.EasingFunction>
+                        <CubicEase EasingMode=""EaseOut""/>
+                      </ThicknessAnimation.EasingFunction>
+                    </ThicknessAnimation>
+                  </Storyboard>
+                </BeginStoryboard>
+              </Trigger.ExitActions>
             </Trigger>
             <Trigger Property=""IsMouseOver"" Value=""True"">
-              <Setter TargetName=""Box"" Property=""BorderBrush"" Value=""#9B4DFF""/>
+              <Setter TargetName=""Track"" Property=""Opacity"" Value=""0.85""/>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -225,34 +648,98 @@ namespace CKeyViewer.Ui
     </Setter>
   </Style>
 
-  <!-- 按钮 -->
+  <!-- 按钮：圆角胶囊 + 按下压暗 -->
   <Style TargetType=""Button"">
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
+    <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
     <Setter Property=""Template"">
       <Setter.Value>
         <ControlTemplate TargetType=""Button"">
           <Border x:Name=""B"" Background=""{TemplateBinding Background}"" BorderBrush=""{TemplateBinding BorderBrush}""
-                  BorderThickness=""{TemplateBinding BorderThickness}"" CornerRadius=""4"" Padding=""{TemplateBinding Padding}"">
+                  BorderThickness=""{TemplateBinding BorderThickness}"" CornerRadius=""9"" Padding=""{TemplateBinding Padding}"">
             <ContentPresenter HorizontalAlignment=""{TemplateBinding HorizontalContentAlignment}"" VerticalAlignment=""Center""/>
           </Border>
           <ControlTemplate.Triggers>
-            <Trigger Property=""IsMouseOver"" Value=""True""><Setter TargetName=""B"" Property=""Opacity"" Value=""0.85""/></Trigger>
-            <Trigger Property=""IsPressed"" Value=""True""><Setter TargetName=""B"" Property=""Opacity"" Value=""0.7""/></Trigger>
+            <Trigger Property=""IsMouseOver"" Value=""True""><Setter TargetName=""B"" Property=""Opacity"" Value=""0.86""/></Trigger>
+            <Trigger Property=""IsPressed"" Value=""True""><Setter TargetName=""B"" Property=""Opacity"" Value=""0.62""/></Trigger>
+            <Trigger Property=""IsEnabled"" Value=""False""><Setter TargetName=""B"" Property=""Opacity"" Value=""0.4""/></Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
   </Style>
 
-  <!-- 滑块 -->
-  <Style TargetType=""Slider"">
+  <!-- 滑块：细轨 + 圆形拇指 -->
+  <Style x:Key=""KvSliderFill"" TargetType=""RepeatButton"">
+    <Setter Property=""Focusable"" Value=""False""/>
+    <Setter Property=""IsTabStop"" Value=""False""/>
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""RepeatButton"">
+          <Border Height=""4"" CornerRadius=""2"" Background=""%%ACCENT%%"" VerticalAlignment=""Center""/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key=""KvSliderEmpty"" TargetType=""RepeatButton"">
+    <Setter Property=""Focusable"" Value=""False""/>
+    <Setter Property=""IsTabStop"" Value=""False""/>
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""RepeatButton"">
+          <Border Height=""4"" CornerRadius=""2"" Background=""Transparent"" VerticalAlignment=""Center""/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key=""KvSliderThumb"" TargetType=""Thumb"">
+    <Setter Property=""Width"" Value=""22""/>
     <Setter Property=""Height"" Value=""22""/>
+    <Setter Property=""Cursor"" Value=""Hand""/>
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""Thumb"">
+          <Ellipse Fill=""#FFFFFF"" Width=""22"" Height=""22"">
+            <Ellipse.Effect>
+              <DropShadowEffect BlurRadius=""5"" ShadowDepth=""1"" Opacity=""0.32"" Color=""Black""/>
+            </Ellipse.Effect>
+          </Ellipse>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style TargetType=""Slider"">
+    <Setter Property=""Height"" Value=""28""/>
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""Slider"">
+          <Grid VerticalAlignment=""Center"">
+            <Border Height=""4"" CornerRadius=""2"" Background=""%%SWOFF%%"" VerticalAlignment=""Center""/>
+            <Track x:Name=""PART_Track"">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton Command=""Slider.DecreaseLarge"" Style=""{StaticResource KvSliderFill}""/>
+              </Track.DecreaseRepeatButton>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton Command=""Slider.IncreaseLarge"" Style=""{StaticResource KvSliderEmpty}""/>
+              </Track.IncreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Style=""{StaticResource KvSliderThumb}""/>
+              </Track.Thumb>
+            </Track>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <Style TargetType=""TextBox"">
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
     <Setter Property=""CaretBrush"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""SelectionBrush"" Value=""#9B4DFF""/>
+    <Setter Property=""SelectionBrush"" Value=""%%ACCENT%%""/>
+    <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
   </Style>
 
   <Style TargetType=""ScrollBar"">
@@ -261,15 +748,12 @@ namespace CKeyViewer.Ui
   </Style>
 
   <Style TargetType=""ToolTip"">
-    <Setter Property=""Background"" Value=""#252131""/>
+    <Setter Property=""Background"" Value=""%%CARD%%""/>
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""BorderBrush"" Value=""#3B3549""/>
+    <Setter Property=""BorderBrush"" Value=""%%BORDER%%""/>
   </Style>
 
 </ResourceDictionary>";
-
-            return (ResourceDictionary)System.Windows.Markup.XamlReader.Parse(xaml);
-        }
 
         // ---------------------------------------------------------------
         // 控件
@@ -282,11 +766,13 @@ namespace CKeyViewer.Ui
                 Content = label,
                 IsChecked = get(),
                 FontFamily = UiFont,
-                FontSize = 12.5,
+                FontSize = 13,
                 Foreground = Text,
                 VerticalContentAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 2, 0, 2),
-                Cursor = Cursors.Hand
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Cursor = Cursors.Hand,
+                Tag = TagRow
             };
             cb.Checked += (s, e) => set(true);
             cb.Unchecked += (s, e) => set(false);
@@ -792,13 +1278,14 @@ namespace CKeyViewer.Ui
             var b = new Button
             {
                 Content = text,
-                Padding = new Thickness(12, 5, 12, 5),
+                Padding = new Thickness(14, 7, 14, 7),
                 Background = accent ? Accent : PanelAlt,
                 BorderBrush = accent ? Accent : Border,
-                BorderThickness = new Thickness(1),
+                BorderThickness = new Thickness(accent ? 0 : 1),
                 FontFamily = UiFont,
                 FontSize = 12.5,
-                Foreground = Text,
+                // 强调按钮在 iOS 里是蓝底白字；普通按钮用主文字色
+                Foreground = accent ? Brushes.White : Text,
                 Cursor = Cursors.Hand,
                 MinWidth = 78,
                 RenderTransformOrigin = new Point(0.5, 0.5)
@@ -832,12 +1319,13 @@ namespace CKeyViewer.Ui
             return b;
         }
 
-        /// <summary>危险操作按钮（删除档案等）。</summary>
+        /// <summary>危险操作按钮（删除档案等）—— iOS 的红底白字。</summary>
         public static Button DangerButton(string text, Action act)
         {
             var b = Button(text, act);
-            b.Background = Freeze("#4A2230");
-            b.BorderBrush = Freeze("#7A3348");
+            b.Background = Danger;
+            b.BorderThickness = new Thickness(0);
+            b.Foreground = Brushes.White;
             return b;
         }
 

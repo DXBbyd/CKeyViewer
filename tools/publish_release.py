@@ -1,4 +1,4 @@
-"""把 release/ 下的资产发布到 GitHub Release。
+﻿"""把 release/ 下的资产发布到 GitHub Release。
 
 用法（PowerShell）：
     $env:GITHUB_TOKEN = "ghp_xxx"        # 只需要 repo 权限（或 fine-grained 的 Contents: Read and write）
@@ -10,7 +10,7 @@
 
 环境变量：
     GITHUB_TOKEN / GH_TOKEN   必填
-    TAG                       默认 v1.0.0
+    TAG                       默认 V1.1.0（仓库里的 tag 用大写 V，如 V1.0.0）
     RELEASE_NAME              默认 "CKeyViewer 1.0.0"
 
 为什么不走 git：本机 github.com:443 时通时不通，而且 Release 资产（108 MB）不能靠 git 推
@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 
 REPO = "DXBbyd/CKeyViewer"
-TAG = os.environ.get("TAG", "v1.1.0")
+TAG = os.environ.get("TAG", "V1.1.0")
 VERSION = "1.1.0"
 RELEASE_NAME = os.environ.get("RELEASE_NAME", "CKeyViewer " + VERSION)
 TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""

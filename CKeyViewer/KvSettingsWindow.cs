@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Markup;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using CKeyViewer.Core;
 using CKeyViewer.Render;
@@ -27,6 +28,7 @@ namespace CKeyViewer
         private readonly TextBlock _title;
         private readonly TextBlock _status;
         private readonly ScrollViewer _scroll;
+        private readonly Border _header;
 
         private int _tab;
         private bool _suppress;
@@ -35,11 +37,29 @@ namespace CKeyViewer
         /// <summary>正在「引导创建」的节点 id（0 = 无）。引导流程：录入按键 → 配置大小 → 仅拖拽摆放。</summary>
         private int _guidedId;
 
-        /// <summary>「自由布局」标签页的下标（拖动模式与主机状态联动时用到）。</summary>
-        private const int CustomTab = 2;
+        /// <summary>ADOFAI 页「元素细节」里正在编辑的元素 id。</summary>
+        private string _adofaiEditing = Adofai.AdofaiElements.Combo;
+
+        /// <summary>标签页下标。全部具名，插页时只改这里，不再靠魔法数字。</summary>
+        private const int ProfileTab = 0;
+        private const int LayoutTab = 1;
+        private const int SnapTab = 2;
+        private const int CustomTab = 3;
+        private const int LookTab = 4;
+        private const int TextTab = 5;
+        private const int RainTab = 6;
+        private const int BindTab = 7;
+        private const int PerKeyTab = 8;
+        private const int AnimTab = 9;
+        private const int StatsTab = 10;
+
+        /// <summary>「ADOFAI」标签页的下标（托盘菜单跳转用）。</summary>
+        public const int AdofaiTab = 11;
+
+        private const int InfoTab = 12;
 
         /// <summary>「关于」标签页的下标（托盘菜单跳转用）。</summary>
-        public const int AboutTab = 11;
+        public const int AboutTab = 13;
 
         /// <summary>切到指定标签页（会走正常的选中流程，连带落盘 UiTab）。</summary>
         public void SelectTab(int index)
@@ -50,14 +70,63 @@ namespace CKeyViewer
 
         private static readonly string[] Tabs =
         {
-            "档案", "布局", "自由布局", "外观", "文字", "雨线", "按键绑定", "每键配色", "按压动画", "统计", "热键信息", "关于"
+            "档案", "布局", "吸附", "自由布局", "外观", "文字", "雨线", "按键绑定", "每键配色",
+            "按压动画", "统计", "ADOFAI", "热键信息", "关于"
         };
 
+        /// <summary>大标题下面那句说明。</summary>
+        private static string SubtitleFor(int tab)
+        {
+            switch (tab)
+            {
+                case ProfileTab: return "档案、主题与日常维护";
+                case LayoutTab: return "预设键位布局的尺寸与位置";
+                case SnapTab: return "把覆盖层贴到屏幕的固定位置，窗口变化自动重吸";
+                case CustomTab: return "自由摆放每一个按键节点";
+                case LookTab: return "键帽、配色与背景图片";
+                case TextTab: return "字体、字号与文字效果";
+                case RainTab: return "按下时落下的雨线";
+                case BindTab: return "给每个键位绑定键盘或鼠标按键";
+                case PerKeyTab: return "每个键位单独配色";
+                case AnimTab: return "按下与松开时的缩放动画";
+                case StatsTab: return "KPS、累计总数与状态";
+                case AdofaiTab: return "读取冰与火之舞的实时信息（不需要装 Mod）";
+                case InfoTab: return "全局热键占用情况与程序信息";
+                default: return "作者、版本与声明";
+            }
+        }
+
         private KvProfile P => _host.P;
+
+        /// <summary>切换界面主题（浅色 / 深色）。</summary>
+        public void SetTheme(string name)
+        {
+            _host.Store.Settings.Theme = name;
+            Kit.UseTheme(KvPalette.For(name));
+            _host.QueueSave();
+            ApplyChrome();
+            Rebuild();
+        }
+
+        /// <summary>把当前调色板铺到窗口自身（背景、前景、控件模板资源）。</summary>
+        private void ApplyChrome()
+        {
+            Background = Kit.Bg;
+            Foreground = Kit.Text;
+            _nav.Background = Kit.Sidebar;
+            _nav.Foreground = Kit.Text;
+            _scroll.Background = Kit.Bg;
+            _header.Background = Kit.Sidebar;
+            _header.BorderBrush = Kit.Separator;
+            Resources = Kit.Theme();
+        }
 
         public KvSettingsWindow(KvHost host)
         {
             _host = host;
+
+            // 主题必须在建控件之前定下来 —— 画刷是冻结的，建完再换只对新控件生效
+            Kit.UseTheme(KvPalette.For(_host.Store.Settings.Theme));
 
             Title = "CKeyViewer 设置";
 
@@ -89,8 +158,11 @@ namespace CKeyViewer
             var header = new Border
             {
                 Background = Kit.Sidebar,
-                Padding = new Thickness(16, 10, 12, 10)
+                BorderBrush = Kit.Separator,
+                BorderThickness = new Thickness(0, 0, 0, 0),
+                Padding = new Thickness(16, 11, 12, 11)
             };
+            _header = header;
             var headerGrid = new Grid();
             headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -154,13 +226,23 @@ namespace CKeyViewer
             root.Children.Add(_scroll);
 
             Content = root;
-            Resources = Kit.Theme();
+            ApplyChrome();
 
             _host.Changed += OnHostChanged;
             _host.LayoutStateChanged += OnLayoutStateChanged;
+
+            // ADOFAI 的连接状态是随时间变的，光靠 Changed 事件刷新不到；
+            // 只在停在该标签页时每 500ms 刷一次文本（不重建控件树，免得闪烁）。
+            _adofaiTimer.Tick += (s, e) =>
+            {
+                if (_tab == AdofaiTab) UpdateAdofaiStatus();
+            };
+            _adofaiTimer.Start();
+
             Closed += (s, e) =>
             {
                 _restoreOnExit = false;
+                _adofaiTimer.Stop();
                 // 关窗口时先退出布局模式，免得覆盖层一直不穿透
                 _host.SetLayoutMode(false, "settings closed");
                 _host.Changed -= OnHostChanged;
@@ -266,21 +348,27 @@ namespace CKeyViewer
             double offset = keepScroll ? _scroll.VerticalOffset : 0;
             var panel = new StackPanel();
 
+            // iOS 的大标题：页面顶部来一行「标题 + 一句说明」，比在窄标题栏里塞小字清楚得多
+            panel.Children.Add(Kit.LargeTitle(Tabs[_tab], SubtitleFor(_tab)));
+
             try
             {
                 switch (_tab)
                 {
-                    case 0: BuildProfile(panel); break;
-                    case 1: BuildLayout(panel); break;
-                    case 2: BuildCustom(panel); break;
-                    case 3: BuildAppearance(panel); break;
-                    case 4: BuildText(panel); break;
-                    case 5: BuildRain(panel); break;
-                    case 6: BuildKeys(panel); break;
-                    case 7: BuildPerKey(panel); break;
-                    case 8: BuildAnimation(panel); break;
-                    case 9: BuildStats(panel); break;
-                    case 11: BuildAbout(panel); break;
+                    case ProfileTab: BuildProfile(panel); break;
+                    case LayoutTab: BuildLayout(panel); break;
+                    case SnapTab: BuildSnap(panel); break;
+                    case CustomTab: BuildCustom(panel); break;
+                    case LookTab: BuildAppearance(panel); break;
+                    case TextTab: BuildText(panel); break;
+                    case RainTab: BuildRain(panel); break;
+                    case BindTab: BuildKeys(panel); break;
+                    case PerKeyTab: BuildPerKey(panel); break;
+                    case AnimTab: BuildAnimation(panel); break;
+                    case StatsTab: BuildStats(panel); break;
+                    case AdofaiTab: BuildAdofai(panel); break;
+                    case InfoTab: BuildInfo(panel); break;
+                    case AboutTab: BuildAbout(panel); break;
                     default: BuildInfo(panel); break;
                 }
             }
@@ -289,6 +377,10 @@ namespace CKeyViewer
                 Diag.Log("settings build: " + ex);
                 panel.Children.Add(Kit.Text2("构建此页面时出错：" + ex.Message, 12, Kit.Sub));
             }
+
+            // 把「分组标题 + 它下面的一串行」重组成 iOS 的分组卡片。
+            // 放在这里统一处理，13 个页面几百个 Add(...) 一行都不用改。
+            Kit.WrapGroups(panel);
 
             _body.Content = panel;
 
@@ -392,6 +484,12 @@ namespace CKeyViewer
             p.Children.Add(Kit.Check("流媒体模式（隐藏 KPS / Total 数字）", () => P.StreamerMode,
                 v => Apply(() => P.StreamerMode = v)));
 
+            p.Children.Add(Kit.Section("界面主题"));
+            p.Children.Add(Kit.Hint("影响设置面板与安装程序的外观，不影响覆盖层本身。"));
+            p.Children.Add(Kit.Segmented(new[] { "浅色", "深色" },
+                () => _host.Store.Settings.Theme == "light" ? 0 : 1,
+                i => SetTheme(i == 0 ? "light" : "dark"), 220));
+
             p.Children.Add(Kit.Section("维护"));
             p.Children.Add(Kit.HRow(
                 Kit.Button("重置计数", () =>
@@ -477,7 +575,85 @@ namespace CKeyViewer
             }
         }
 
-        // ---- 2. 自由布局（FmNode / FmLayerGroup）----
+        // ---- 2. 吸附 ----
+
+        /// <summary>独立的「吸附」页：按键覆盖层与 ADOFAI 信息层各自贴到屏幕固定位置。</summary>
+        private void BuildSnap(Panel p)
+        {
+            var s = _host.Store.Settings;
+            bool custom = KvGeometry.IsCustom(P.StyleEnum);
+
+            p.Children.Add(Kit.Section("按键覆盖层"));
+            p.Children.Add(Kit.Hint(
+                "把整块按键贴到屏幕的固定位置。这里对着的是「工作区」——即时算出屏幕去掉任务栏后的区域，\r\n" +
+                "所以吸附到「左下」不会压在任务栏图标上。吸附只改位置、不改大小。"));
+            p.Children.Add(Kit.Row("吸附位置", Kit.AnchorPicker(
+                () => s.Anchor,
+                v =>
+                {
+                    s.Anchor = v;
+                    _host.QueueSave();
+                    _host.Rebuild();
+                    Rebuild();
+                })));
+            p.Children.Add(Kit.Slider("离边缘的边距", 0, 160, () => s.AnchorMargin,
+                v =>
+                {
+                    s.AnchorMargin = v;
+                    _host.QueueSave();
+                    _host.Rebuild();
+                }, "0"));
+            p.Children.Add(Kit.Check("窗口 / 分辨率变化后自动重新吸附（动态吸附）",
+                () => s.AnchorDynamic,
+                v => { s.AnchorDynamic = v; _host.QueueSave(); }));
+
+            if (custom)
+                p.Children.Add(Kit.Hint("当前是自由布局：覆盖层铺满整屏、节点各自定位，吸附不生效。"));
+            else if (s.Anchor == 0)
+                p.Children.Add(Kit.Hint(P.CustomPositionEnabled
+                    ? "现在是「自由摆放」：位置由「布局」页的自定义位置决定。想吸附就点上面的九宫格。"
+                    : "现在是默认位置（水平居中、贴工作区底边）。"));
+
+            // ---- 信息层 ----
+
+            var a = _host.AdofaiSettings;
+
+            p.Children.Add(Kit.Section("冰与火之舞信息层"));
+            p.Children.Add(Kit.Hint(
+                "信息层是一块铺满工作区的独立覆盖层（所以元素可以放到屏幕的任何位置，\r\n" +
+                "不再被按键那一小块窗口框住）。自动排列打开时整块自上而下叠成一列、跟着下面的九宫格吸附；\r\n" +
+                "关掉之后每个元素各用各的位置，可以在「ADOFAI」页逐项调，也可以直接进拖动模式拖。"));
+
+            p.Children.Add(Kit.Check("自动排列（整块一起吸附）", () => a.AutoLayout,
+                v => { _host.AdofaiSetAutoLayout(v); Rebuild(); }));
+
+            if (a.AutoLayout)
+            {
+                p.Children.Add(Kit.Row("吸附位置", Kit.AnchorPicker(
+                    () => a.SnapAnchor,
+                    v => ApplyAdofai(() => a.SnapAnchor = v))));
+                p.Children.Add(Kit.Slider("离边缘的边距", 0, 200, () => a.SnapMargin,
+                    v => ApplyAdofai(() => a.SnapMargin = v), "0"));
+            }
+            else
+            {
+                p.Children.Add(Kit.Hint(
+                    "已关掉自动排列：每个元素用「ADOFAI」页里的位置，方向键微调的步长是 1 像素（Shift 为 10）。"));
+            }
+
+            p.Children.Add(Kit.HRow(
+                Kit.Button(_host.LayoutMode ? "退出拖动模式（Esc）" : "▶ 在屏幕上拖动摆放",
+                    () => _host.SetLayoutMode(!_host.LayoutMode, "snap tab"), accent: true)));
+
+            p.Children.Add(Kit.Hint(
+                "进入拖动模式后（信息层会显示元素虚线框）：\r\n" +
+                "· 直接拖某个元素 → 它自己单独摆放，其余元素留在原位（会自动脱离自动排列）\r\n" +
+                "· 拖元素之间的空白、或按住 Shift 拖 → 整块一起平移\r\n" +
+                "· 选中元素后可以用方向键微调\r\n" +
+                "· Esc 退出并自动保存"));
+        }
+
+        // ---- 3. 自由布局（FmNode / FmLayerGroup）----
 
         private void BuildCustom(Panel p)
         {
@@ -1540,7 +1716,207 @@ namespace CKeyViewer
             }
         }
 
-        // ---- 10. 热键信息 ----
+        // ---- 10. ADOFAI（冰与火之舞）覆盖层 ----
+
+        private TextBlock _adofaiStatus;
+        private readonly DispatcherTimer _adofaiTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+
+        /// <summary>ADOFAI 的改动不进档案，只写 config/adofai.json。</summary>
+        private void ApplyAdofai(Action mutate)
+        {
+            try
+            {
+                mutate();
+                _host.AdofaiRepaint();
+                _host.QueueSave();
+            }
+            catch (Exception ex)
+            {
+                Diag.Log("adofai apply: " + ex);
+            }
+        }
+
+        private void UpdateAdofaiStatus()
+        {
+            if (_adofaiStatus == null) return;
+
+            string miss = _host.AdofaiMissingFields;
+            string snap = _host.AdofaiSnapshot;
+
+            _adofaiStatus.Text = "状态：" + _host.AdofaiStatus
+                + (string.IsNullOrEmpty(snap) ? "" : "\r\n" + snap)
+                + (string.IsNullOrEmpty(miss) ? "" : "\r\n未解析到的字段：" + miss);
+        }
+
+        private void BuildAdofai(Panel p)
+        {
+            var s = _host.AdofaiSettings;
+
+            p.Children.Add(Kit.Section("ADOFAI 信息覆盖层（冰与火之舞）"));
+            p.Children.Add(Kit.Check("启用", () => s.Enabled,
+                v => { _host.SetAdofaiEnabled(v); Rebuild(); }));
+
+            _adofaiStatus = Kit.Text2("", 12, Kit.Sub);
+            _adofaiStatus.Margin = new Thickness(0, 4, 0, 6);
+            p.Children.Add(_adofaiStatus);
+            UpdateAdofaiStatus();
+
+            p.Children.Add(Kit.HRow(
+                Kit.Button("立即重连", () => { _host.AdofaiReconnect(); UpdateAdofaiStatus(); }),
+                Kit.Button("刷新", () => Rebuild())
+            ));
+
+            p.Children.Add(Kit.Hint(
+                "不需要安装任何 Mod / UMM：本程序直接从游戏进程里读取 Unity（Mono）运行时里的对象，\r\n" +
+                "游戏目录不会被写入任何文件。\r\n" +
+                "用法：先启动冰与火之舞（Steam 版），再勾选「启用」，进入关卡后即显示。\r\n" +
+                "本程序请保持管理员运行 —— 否则读不到更高完整性级别的游戏进程。"));
+
+            // ---- 显示哪些元素 ----
+
+            p.Children.Add(Kit.Section("显示元素"));
+            p.Children.Add(Kit.Hint(
+                "每一项都对应 JipperOverlayer 的一个 DisplayElement：单独显示 / 隐藏、单独摆放、单独配色。\r\n" +
+                "位置既可以在屏幕上直接拖（进拖动模式），也可以在「吸附」页把整块吸到屏幕某个角。"));
+
+            foreach (string id in Adofai.AdofaiElements.Order)
+            {
+                var el = s.ElementOf(id);
+                p.Children.Add(Kit.Check(Adofai.AdofaiElements.NameOf(id), () => el.Visible,
+                    v => ApplyAdofai(() => el.Visible = v)));
+            }
+
+            // ---- 单个元素的细节 ----
+
+            string[] ids = Adofai.AdofaiElements.Order;
+            var names = new List<string>();
+            foreach (string id in ids) names.Add(Adofai.AdofaiElements.NameOf(id));
+
+            int cur = Array.IndexOf(ids, _adofaiEditing);
+            if (cur < 0) cur = 0;
+            _adofaiEditing = ids[cur];
+
+            p.Children.Add(Kit.Section("元素细节"));
+            p.Children.Add(Kit.Combo("正在编辑", names, () => cur,
+                i => { _adofaiEditing = ids[i]; Rebuild(); }, 260));
+
+            var edit = s.ElementOf(_adofaiEditing);
+            p.Children.Add(Kit.Hint(Adofai.AdofaiElements.Describe(_adofaiEditing)));
+
+            p.Children.Add(Kit.Check("显示这个元素", () => edit.Visible,
+                v => ApplyAdofai(() => edit.Visible = v)));
+            p.Children.Add(Kit.Row("对齐", Kit.Segmented(new[] { "靠左", "居中", "靠右" },
+                () => edit.Align, v => ApplyAdofai(() => edit.Align = v), 210)));
+            p.Children.Add(Kit.NumberRow("字号倍率", () => edit.FontScale,
+                v => ApplyAdofai(() => edit.FontScale = v), 0.05, 0.2, 4, "0.00"));
+            p.Children.Add(Kit.Check("使用单独颜色", () => edit.OwnColor,
+                v => ApplyAdofai(() => edit.OwnColor = v)));
+            if (edit.OwnColor)
+                p.Children.Add(Kit.ColorRow("颜色", () => edit.Color,
+                    v => ApplyAdofai(() => edit.Color = v)));
+
+            p.Children.Add(Kit.HRow(
+                Kit.Button("选中它", () => _host.AdofaiSelect(_adofaiEditing)),
+                Kit.Button(_host.LayoutMode ? "退出拖动模式（Esc）" : "▶ 进拖动模式拖它",
+                    () =>
+                    {
+                        _host.AdofaiSelect(_adofaiEditing);
+                        _host.SetLayoutMode(!_host.LayoutMode, "adofai tab");
+                    }, accent: true)));
+
+            // ---- 排列方式 ----
+
+            p.Children.Add(Kit.Section("排列方式"));
+            p.Children.Add(Kit.Check("自动排列（自上而下叠成一列）", () => s.AutoLayout,
+                v => { _host.AdofaiSetAutoLayout(v); Rebuild(); }));
+
+            if (s.AutoLayout)
+            {
+                p.Children.Add(Kit.Row("整块吸附", Kit.AnchorPicker(() => s.SnapAnchor,
+                    v => ApplyAdofai(() => s.SnapAnchor = v))));
+                p.Children.Add(Kit.Slider("吸附边距", 0, 200, () => s.SnapMargin,
+                    v => ApplyAdofai(() => s.SnapMargin = v), "0"));
+            }
+            else
+            {
+                p.Children.Add(Kit.Hint(
+                    "已关掉自动排列：每个元素用各自的位置。在拖动模式里直接拖元素即可，" +
+                    "选中后也能用方向键微调（Shift 为 10 像素）。"));
+                p.Children.Add(Kit.Slider("整块 X（0=最左 1=最右）", 0, 1, () => s.X,
+                    v => ApplyAdofai(() => s.X = v), "0.000"));
+                p.Children.Add(Kit.Slider("整块 Y（0=最顶 1=最底）", 0, 1, () => s.Y,
+                    v => ApplyAdofai(() => s.Y = v), "0.000"));
+                p.Children.Add(Kit.Row("整块对齐", Kit.Segmented(new[] { "靠左", "居中", "靠右" },
+                    () => s.Align, v => ApplyAdofai(() => s.Align = v), 210)));
+            }
+
+            // ---- 连击规则 ----
+
+            p.Children.Add(Kit.Section("连击规则"));
+            p.Children.Add(Kit.Hint(
+                "游戏本身没有 Combo 字段（JipperOverlayer 也是自己算的），这里按判定序列累积。\r\n" +
+                "原版的 AllowELCombo / EnableAutoCombo / AllowOrangeCombo 对应下面前两项。"));
+            p.Children.Add(Kit.Check("Early / Late Perfect 也算连击（AllowELCombo）", () => s.AllowElCombo,
+                v => ApplyAdofai(() => s.AllowElCombo = v)));
+            p.Children.Add(Kit.Check("自动砖 Auto 也算连击（EnableAutoCombo）", () => s.AllowAutoCombo,
+                v => ApplyAdofai(() => s.AllowAutoCombo = v)));
+
+            // ---- 全局文字与配色 ----
+
+            p.Children.Add(Kit.Section("文字"));
+            p.Children.Add(Kit.Hint("字号单位是逻辑像素，会跟着系统缩放一起放大 —— 5K 屏上也不会变成蚂蚁字。"));
+            p.Children.Add(Kit.Slider("字号", 8, 96, () => s.FontSize,
+                v => ApplyAdofai(() => s.FontSize = v), "0.#"));
+            p.Children.Add(Kit.Slider("行间距（× 字号）", 0.8, 2.5, () => s.LineGap,
+                v => ApplyAdofai(() => s.LineGap = v), "0.00"));
+            p.Children.Add(Kit.Check("粗体", () => s.Bold, v => ApplyAdofai(() => s.Bold = v)));
+            p.Children.Add(Kit.Check("斜体", () => s.Italic, v => ApplyAdofai(() => s.Italic = v)));
+            p.Children.Add(Kit.TextBoxRow("字体（留空 = 跟随按键字体）", () => s.FontRef,
+                v => ApplyAdofai(() => s.FontRef = v), 260));
+
+            p.Children.Add(Kit.Section("配色"));
+            p.Children.Add(Kit.ColorRow("文字", () => s.Color, v => ApplyAdofai(() => s.Color = v)));
+            p.Children.Add(Kit.ColorRow("标签", () => s.LabelColor, v => ApplyAdofai(() => s.LabelColor = v)));
+            p.Children.Add(Kit.ColorRow("状态标题", () => s.TitleColor, v => ApplyAdofai(() => s.TitleColor = v)));
+            p.Children.Add(Kit.Check("描边", () => s.HasOutline, v => ApplyAdofai(() => s.HasOutline = v)));
+            p.Children.Add(Kit.ColorRow("描边颜色", () => s.OutlineColor, v => ApplyAdofai(() => s.OutlineColor = v)));
+            p.Children.Add(Kit.Slider("描边粗细（× 字号）", 0, 0.3, () => s.OutlineWidth,
+                v => ApplyAdofai(() => s.OutlineWidth = v), "0.000"));
+
+            // ---- 文案（JipperOverlayer 的 LabelConfig）----
+
+            var lab = s.Labels;
+
+            p.Children.Add(Kit.Section("文案"));
+            p.Children.Add(Kit.Hint(
+                "对应 JipperOverlayer 的 LabelConfig：把每行的前缀改成任意文字（想全改成中文也行）。\r\n" +
+                "留空会写回默认值。死亡那行是模板，{0} 死亡 / {1} 检查点 / {2} 尝试次数。"));
+            p.Children.Add(Kit.TextBoxRow("准确率标签", () => lab.Acc, v => ApplyAdofai(() => lab.Acc = v), 200));
+            p.Children.Add(Kit.TextBoxRow("X-精准度标签", () => lab.XAcc, v => ApplyAdofai(() => lab.XAcc = v), 200));
+            p.Children.Add(Kit.TextBoxRow("进度标签", () => lab.Prog, v => ApplyAdofai(() => lab.Prog = v), 200));
+            p.Children.Add(Kit.TextBoxRow("BPM 标签", () => lab.Bpm, v => ApplyAdofai(() => lab.Bpm = v), 200));
+            p.Children.Add(Kit.TextBoxRow("判定分布标签", () => lab.Judge, v => ApplyAdofai(() => lab.Judge = v), 200));
+            p.Children.Add(Kit.TextBoxRow("Perfect Play 标题", () => lab.PerfectPlay,
+                v => ApplyAdofai(() => lab.PerfectPlay = v), 200));
+            p.Children.Add(Kit.TextBoxRow("Perfectionist 标题", () => lab.Perfectionist,
+                v => ApplyAdofai(() => lab.Perfectionist = v), 200));
+            p.Children.Add(Kit.TextBoxRow("Auto-tile 标题", () => lab.AutoTile,
+                v => ApplyAdofai(() => lab.AutoTile = v), 200));
+            p.Children.Add(Kit.TextBoxRow("死亡那行（模板）", () => lab.Stats,
+                v => ApplyAdofai(() => lab.Stats = v), 260));
+            p.Children.Add(Kit.HRow(
+                Kit.Button("恢复默认文案", () =>
+                {
+                    s.Labels = new Adofai.AdofaiLabels();
+                    ApplyAdofai(() => { });
+                    Rebuild();
+                })));
+        }
+
+        // ---- 11. 热键信息 ----
 
         private void BuildInfo(Panel p)
         {

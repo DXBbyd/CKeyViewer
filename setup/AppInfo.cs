@@ -8,7 +8,25 @@ namespace CKeyViewer.Setup
     {
         public const string ProductName = "CKeyViewer";
         public const string DisplayName = "CKeyViewer 按键可视化覆盖层";
-        public const string Version = "1.0.0";
+
+        /// <summary>
+        /// 安装程序显示的版本 = 本地程序集版本（形如 <c>1.2.0</c>，丢掉第 4 位）。
+        /// 以前是个写死的字符串，发新版时忘了改就会显示成旧版本号；
+        /// 改成读程序集后，只需同步 `setup.csproj` 与 `CKeyViewer.csproj` 的 &lt;Version&gt;。
+        /// </summary>
+        public static readonly string Version = AssemblyVersion();
+
+        private static string AssemblyVersion()
+        {
+            try
+            {
+                var v = typeof(AppInfo).Assembly.GetName().Version;
+                if (v != null && v.Major > 0)
+                    return v.Major + "." + v.Minor + "." + v.Build;
+            }
+            catch { }
+            return "0.0.0";
+        }
         public const string Publisher = "DXBbyd";
         public const string Author = "DXBbyd";
         public const string AuthorQQ = "3157037483";

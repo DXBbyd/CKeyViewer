@@ -122,6 +122,9 @@ namespace CKeyViewer.Render
                 DrawLayoutSelection(dc, typeface, ppd);
                 DrawLayoutBanner(dc, typeface, ppd);
             }
+
+            // ADOFAI 信息不再画在这里 —— 它有自己的全屏窗口（AdofaiWindow），
+            // 这样元素才能被拖到屏幕的任何位置，而不受这块键帽窗口的限制。
         }
 
         // ---------------------------------------------------------------

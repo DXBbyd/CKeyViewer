@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Windows;
 using CKeyViewer.Core;
 using CKeyViewer.Ui;
 
@@ -60,6 +61,19 @@ namespace CKeyViewer
             // Esc 在 Poll 层被单独吃掉（取消），PickKey 里也不该返回它
             Capture("Esc 不参与捕获", 0, Keys(0x1B));
 
+            Out.AppendLine("---- adofai settings ----");
+            AdofaiRoundTrip();
+            AdofaiSanitize();
+
+            Out.AppendLine("---- snap anchors ----");
+            SnapAnchors();
+
+            Out.AppendLine("---- adofai element layout ----");
+            AdofaiElementLayout();
+
+            Out.AppendLine("---- tray menu skin ----");
+            MenuSkin();
+
             Out.AppendLine("---- summary ----");
             Out.AppendLine(_fail == 0 ? string.Format("ALL PASS ({0} checks)", _pass)
                                       : string.Format("{0} passed, {1} FAILED", _pass, _fail));
@@ -110,6 +124,309 @@ namespace CKeyViewer
             Report(what + "（按下={0} 抬起={1} 再按={2}）".Replace("{0}", during.ToString())
                    .Replace("{1}", afterUp.ToString()).Replace("{2}", again.ToString()),
                    323, ok ? 323 : again);
+        }
+
+        // ---- ADOFAI 配置 ----
+
+        /// <summary>
+        /// JSON 往返。这一条不是形式主义：System.Text.Json 默认**不序列化公开字段**，
+        /// 早先把 AdofaiSettings 写成字段时 adofai.json 会静静变成 `{}`，
+        /// 表现是「设置页改完重启全丢」。全改成属性之后靠这个用例钉住。
+        /// </summary>
+        private static void AdofaiRoundTrip()
+        {
+            var src = new Adofai.AdofaiSettings
+            {
+                Enabled = true,
+                X = 0.375, Y = 0.8125, Align = 2, FontSize = 31.5,
+                Bold = false, Italic = true, FontRef = "小明体",
+                Color = KvColor.Rgba(1f, 0f, 0.25f, 0.75f),
+                LabelColor = KvColor.Rgba(0.1f, 0.2f, 0.3f, 0.4f),
+                TitleColor = KvColor.Rgba(1f, 0.85f, 0.3f, 1f),
+                ShowCombo = false, ShowTitle = false, ShowAccuracy = false, ShowXAccuracy = false,
+                ShowProgress = false, ShowBpm = false, ShowJudgement = false, ShowStats = false,
+                AllowElCombo = false, AllowAutoCombo = false,
+                LineGap = 1.75, HasOutline = false,
+                OutlineColor = KvColor.Rgba(0.5f, 0.5f, 0.5f, 1f), OutlineWidth = 0.125
+            };
+
+            string json = System.Text.Json.JsonSerializer.Serialize(src, KvProfileStore.JsonOptions);
+            var back = System.Text.Json.JsonSerializer.Deserialize<Adofai.AdofaiSettings>(
+                json, KvProfileStore.JsonOptions);
+
+            Check("AdofaiSettings JSON 往返不为空", back != null);
+            if (back == null) return;
+
+            var diffs = new List<string>();
+            void Eq(string n, object a, object b)
+            {
+                if (!Equals(a, b)) diffs.Add(n + " " + a + "!=" + b);
+            }
+            Eq("Enabled", src.Enabled, back.Enabled);
+            Eq("X", src.X, back.X);
+            Eq("Y", src.Y, back.Y);
+            Eq("Align", src.Align, back.Align);
+            Eq("FontSize", src.FontSize, back.FontSize);
+            Eq("Bold", src.Bold, back.Bold);
+            Eq("Italic", src.Italic, back.Italic);
+            Eq("FontRef", src.FontRef, back.FontRef);
+            Eq("Color", src.Color.ToHex(), back.Color.ToHex());
+            Eq("LabelColor", src.LabelColor.ToHex(), back.LabelColor.ToHex());
+            Eq("TitleColor", src.TitleColor.ToHex(), back.TitleColor.ToHex());
+            Eq("ShowCombo", src.ShowCombo, back.ShowCombo);
+            Eq("ShowTitle", src.ShowTitle, back.ShowTitle);
+            Eq("ShowAccuracy", src.ShowAccuracy, back.ShowAccuracy);
+            Eq("ShowXAccuracy", src.ShowXAccuracy, back.ShowXAccuracy);
+            Eq("ShowProgress", src.ShowProgress, back.ShowProgress);
+            Eq("ShowBpm", src.ShowBpm, back.ShowBpm);
+            Eq("ShowJudgement", src.ShowJudgement, back.ShowJudgement);
+            Eq("ShowStats", src.ShowStats, back.ShowStats);
+            Eq("AllowElCombo", src.AllowElCombo, back.AllowElCombo);
+            Eq("AllowAutoCombo", src.AllowAutoCombo, back.AllowAutoCombo);
+            Eq("LineGap", src.LineGap, back.LineGap);
+            Eq("HasOutline", src.HasOutline, back.HasOutline);
+            Eq("OutlineColor", src.OutlineColor.ToHex(), back.OutlineColor.ToHex());
+            Eq("OutlineWidth", src.OutlineWidth, back.OutlineWidth);
+
+            Check("字段无一丢失（" + (diffs.Count == 0 ? "全部一致" : string.Join("; ", diffs)) + "）",
+                diffs.Count == 0);
+
+            // 出厂默认必须是关闭的：没装游戏的人不该看见它在到处找进程
+            Check("默认不启用", !new Adofai.AdofaiSettings().Enabled);
+            Check("默认开启连击数", new Adofai.AdofaiSettings().ShowCombo);
+        }
+
+        /// <summary>越界值要被收敛，不能让配置文件里的脏数据把覆盖层画到屏幕外。</summary>
+        private static void AdofaiSanitize()
+        {
+            var s = new Adofai.AdofaiSettings
+            {
+                X = 5, Y = -3, Align = 9, FontSize = 0, LineGap = 0, OutlineWidth = 99, FontRef = null
+            };
+            s.Sanitize();
+
+            Check("X 夹到 1（实际 " + s.X + "）", s.X == 1);
+            Check("Y 夹到 0（实际 " + s.Y + "）", s.Y == 0);
+            Check("Align 越界回落到默认值 1（实际 " + s.Align + "）", s.Align == 1);
+            Check("字号有下限（实际 " + s.FontSize + "）", s.FontSize >= 4);
+            Check("行间距有下限（实际 " + s.LineGap + "）", s.LineGap >= 0.6);
+            Check("描边有上限（实际 " + s.OutlineWidth + "）", s.OutlineWidth <= 0.5);
+            Check("FontRef 不为 null", s.FontRef != null);
+
+            // 文案：null / 空都要回落到默认，模板写坏了不能抛异常
+            var lab = new Adofai.AdofaiLabels { Acc = null, Stats = "" };
+            lab.Sanitize();
+            Check("标签为 null 时回落默认（" + lab.Acc + "）", lab.Acc == "ACC");
+            Check("模板为空时回落默认", lab.Stats.Contains("{0}"));
+            Check("模板正常套用",
+                new Adofai.AdofaiLabels().StatsLine(3, 1, 4) == "Deaths 3   CP 1   Try 4");
+            var broken = new Adofai.AdofaiLabels { Stats = "死了{9}次" };
+            Check("模板占位符越界时回落默认",
+                broken.StatsLine(2, 0, 3) == "Deaths 2   CP 0   Try 3");
+
+            var s2 = new Adofai.AdofaiSettings { Labels = null };
+            s2.Sanitize();
+            Check("Labels 为 null 时自动补上", s2.Labels != null && s2.Labels.Bpm == "BPM");
+        }
+
+        private static void Check(string what, bool ok)
+        {
+            if (ok) _pass++; else _fail++;
+            Out.AppendLine(string.Format("  {0}  {1}", ok ? "OK  " : "FAIL", what));
+        }
+
+        // ---- 吸附 ----
+
+        /// <summary>
+        /// 吸附算法是纯函数，直接喂矩形就能覆盖全部分支。
+        /// 重点钉住三件事：九个位置算得对、**绝不改尺寸**、块比屏幕大时不越界。
+        /// </summary>
+        private static void SnapAnchors()
+        {
+            var area = new Rect(0, 0, 1000, 800);
+            double l, t;
+
+            Check("自由（0）不吸附", !KvSnap.Place(0, 10, 100, 50, area, out l, out t));
+            Check("左上（1）", KvSnap.Place(1, 10, 100, 50, area, out l, out t) && l == 10 && t == 10);
+            Check("中上（2）", KvSnap.Place(2, 10, 100, 50, area, out l, out t) && l == 450 && t == 10);
+            Check("右上（3）", KvSnap.Place(3, 10, 100, 50, area, out l, out t) && l == 890 && t == 10);
+            Check("左中（4）", KvSnap.Place(4, 10, 100, 50, area, out l, out t) && l == 10 && t == 375);
+            Check("正中（5）", KvSnap.Place(5, 10, 100, 50, area, out l, out t) && l == 450 && t == 375);
+            Check("右中（6）", KvSnap.Place(6, 10, 100, 50, area, out l, out t) && l == 890 && t == 375);
+            Check("左下（7）", KvSnap.Place(7, 10, 100, 50, area, out l, out t) && l == 10 && t == 740);
+            Check("中下（8）", KvSnap.Place(8, 10, 100, 50, area, out l, out t) && l == 450 && t == 740);
+            Check("右下（9）", KvSnap.Place(9, 10, 100, 50, area, out l, out t) && l == 890 && t == 740);
+
+            // 越界的锚点值要被收敛，配置文件里写脏了也不能画到屏幕外
+            Check("锚点 99 收敛成 9",
+                KvSnap.Place(99, 10, 100, 50, area, out l, out t) && l == 890 && t == 740);
+            Check("锚点 -5 收敛成自由", !KvSnap.Place(-5, 10, 100, 50, area, out l, out t));
+
+            // 块比工作区还大：夹到左上角，绝不能出现负坐标
+            Check("超大块不越界",
+                KvSnap.Place(9, 10, 2000, 1600, area, out l, out t) && l == 0 && t == 0);
+
+            // 主屏不是从 0,0 开始（副屏在左 / 任务栏在左）时，坐标要跟着工作区走
+            var shifted = new Rect(-1920, 40, 1920, 1000);
+            Check("工作区有偏移时跟着走",
+                KvSnap.Place(7, 0, 100, 50, shifted, out l, out t) && l == -1920 && t == 990);
+        }
+
+        // ---- 托盘菜单皮肤 ----
+
+        /// <summary>
+        /// 托盘菜单换了自定义渲染器（<see cref="KvMenuRenderer"/>）。这里只验证能构造、
+        /// 以及调色板确实传到了 <c>ProfessionalColorTable</c> —— 剩下的绘制是 GDI，
+        /// 无窗口环境下没法跑，靠截图核对（tools/runapp.py --env CKV_TRAYMENU=）。
+        /// </summary>
+        private static void MenuSkin()
+        {
+            foreach (var pal in new[] { KvPalette.Light, KvPalette.Dark })
+            {
+                string which = pal.IsDark ? "深色" : "浅色";
+                var r = new KvMenuRenderer(pal);
+                Check("菜单渲染器可构造（" + which + "）", r != null && r.ColorTable != null);
+
+                // 卡片底色必须真的走到 ColorTable 上 —— 渲染器与 ColorTable 脱钩过，
+                // 症状就是「浅色主题下菜单是一张纯白卡片，文字全看不见」
+                var want = System.Drawing.ColorTranslator.FromHtml(pal.Card);
+                Check("菜单卡片底色跟调色板一致（" + which + "）",
+                    r.ColorTable.ToolStripDropDownBackground.ToArgb() == want.ToArgb());
+
+                var accent = System.Drawing.ColorTranslator.FromHtml(pal.AccentSoft);
+                Check("菜单高亮底色跟调色板一致（" + which + "）",
+                    r.ColorTable.MenuItemSelected.ToArgb() == accent.ToArgb());
+            }
+
+            // 菜单里的「吸附位置」和设置面板共用同一份名称表，不能再各写一份
+            for (int i = KvSnap.Min; i <= KvSnap.Max; i++)
+                Check("锚点 " + i + " 有名字", !string.IsNullOrEmpty(KvSnap.NameOf(i)));
+
+            Check("锚点名称表与取值域等长", KvSnap.Names.Length == KvSnap.Max - KvSnap.Min + 1);
+            Check("锚点 0 是自由", KvSnap.NameOf(KvSnap.Min) == "自由");
+        }
+
+        // ---- 信息层元素 ----
+
+        private static void DrawAdofai(Adofai.AdofaiOverlay ov, Rect area)
+        {
+            var vis = new System.Windows.Media.DrawingVisual();
+            using (var dc = vis.RenderOpen())
+                ov.Draw(dc, area, new System.Windows.Media.Typeface("Segoe UI"), 1.0, 1.0);
+        }
+
+        /// <summary>
+        /// 信息层的元素布局。走的是真正的绘制路径（DrawingContext 到 DrawingVisual），
+        /// 再把画出来的矩形回读做命中测试与拖动 —— 和鼠标拖动时跑的是同一段代码，
+        /// 但不需要模拟输入（模拟键鼠会抢用户的键盘，而且有的机器上会被 UIPI 挡掉）。
+        /// </summary>
+        private static void AdofaiElementLayout()
+        {
+            var ov = new Adofai.AdofaiOverlay();
+            var s = ov.Settings;
+
+            s.Enabled = true;
+            s.AutoLayout = true;
+            s.SnapAnchor = (int)KvAnchor.TopCenter;
+            s.SnapMargin = 20;
+            s.FontSize = 20;
+            s.Sanitize();
+
+            ov.Visible = true;
+            var st = ov.State;
+            st.InLevel = true;
+            st.CurrentTile = 13;
+            st.TotalTiles = 1242;
+            st.Combo = 7;
+            st.ComboTitle = Adofai.AdofaiComboTitle.PerfectPlay;
+            st.HitCounts[(int)Adofai.AdofaiHitMargin.Perfect] = 5;
+            st.HitCounts[(int)Adofai.AdofaiHitMargin.FailMiss] = 1;
+
+            var area = new Rect(0, 0, 1000, 800);
+            DrawAdofai(ov, area);
+
+            Check("八个元素都画出来了（实际 " + ov.Boxes.Count + "）", ov.Boxes.Count == 8);
+            Check("包围盒非空", !ov.GroupRect.IsEmpty);
+
+            bool ordered = true;
+            for (int i = 1; i < ov.Boxes.Count; i++)
+                if (ov.Boxes[i].Rect.Top < ov.Boxes[i - 1].Rect.Bottom - 0.5) ordered = false;
+            Check("自动排列自上而下、不重叠", ordered);
+
+            double cx = ov.GroupRect.Left + ov.GroupRect.Width * 0.5;
+            Check(string.Format("中上吸附后水平居中（中心 {0:0.#}）", cx), Math.Abs(cx - 500) < 1.0);
+            Check(string.Format("中上吸附后贴顶 + 边距 20（顶 {0:0.#}）", ov.GroupRect.Top),
+                Math.Abs(ov.GroupRect.Top - 20) < 1.0);
+
+            // ---- 把判定条单独拖走 ----
+
+            var judge = s.Find(Adofai.AdofaiElements.Judge);
+            var acc = s.Find(Adofai.AdofaiElements.Acc);
+            var judgeBefore = ov.RectOf(Adofai.AdofaiElements.Judge);
+            var accBefore = ov.RectOf(Adofai.AdofaiElements.Acc);
+            Check("判定条有矩形", !judgeBefore.IsEmpty);
+
+            var hit = ov.HitTestElement(new Point(judgeBefore.Left + 5, judgeBefore.Top + 5));
+            Check("命中判定条", ReferenceEquals(hit, judge));
+            Check("命中空白处返回 null",
+                ov.HitTestElement(new Point(2, area.Height - 2)) == null);
+
+            Check("脱离自动排列成功", ov.DetachAutoLayout());
+            Check("脱离后 AutoLayout = false", !s.AutoLayout);
+            Check("脱离后判定条记住了自己的位置",
+                judge.X > 0.01 && judge.X < 0.99 && judge.Y > 0.01 && judge.Y < 0.99);
+
+            Check("移动判定条", ov.MoveElement(judge, 200, 300, area));
+            DrawAdofai(ov, area);
+
+            var judgeAfter = ov.RectOf(Adofai.AdofaiElements.Judge);
+            var accAfter = ov.RectOf(Adofai.AdofaiElements.Acc);
+            Check(string.Format("判定条位移 = 拖拽量（Δ {0:0.#},{1:0.#}）",
+                    judgeAfter.Left - judgeBefore.Left, judgeAfter.Top - judgeBefore.Top),
+                Math.Abs(judgeAfter.Left - judgeBefore.Left - 200) < 1.5 &&
+                Math.Abs(judgeAfter.Top - judgeBefore.Top - 300) < 1.5);
+            Check("其余元素原地不动",
+                Math.Abs(accAfter.Left - accBefore.Left) < 1.5 &&
+                Math.Abs(accAfter.Top - accBefore.Top) < 1.5);
+
+            // 拖出屏幕要被夹回来（只夹位置，不改大小）
+            ov.MoveElement(judge, 99999, 99999, area);
+            DrawAdofai(ov, area);
+            var clamped = ov.RectOf(Adofai.AdofaiElements.Judge);
+            Check(string.Format("拖到屏幕外被夹回（右下 {0:0.#},{1:0.#}）", clamped.Right, clamped.Bottom),
+                clamped.Right <= area.Width + 0.5 && clamped.Bottom <= area.Height + 0.5);
+
+            // ---- 隐藏 ----
+
+            s.Find(Adofai.AdofaiElements.Bpm).Visible = false;
+            DrawAdofai(ov, area);
+            Check("隐藏后不再出现", ov.RectOf(Adofai.AdofaiElements.Bpm).IsEmpty);
+            Check("隐藏后元素数 7（实际 " + ov.Boxes.Count + "）", ov.Boxes.Count == 7);
+            s.Find(Adofai.AdofaiElements.Bpm).Visible = true;
+            DrawAdofai(ov, area);
+
+            // ---- 换锚点：整块跟着走，尺寸不变 ----
+
+            s.AutoLayout = true;
+            DrawAdofai(ov, area);                 // 先回到自动排列，再量「基准尺寸」
+            double w0 = ov.GroupRect.Width, h0 = ov.GroupRect.Height;
+
+            s.SnapAnchor = (int)KvAnchor.BottomRight;
+            DrawAdofai(ov, area);
+            Check(string.Format("右下吸附（右下 {0:0.#},{1:0.#}）",
+                    ov.GroupRect.Right, ov.GroupRect.Bottom),
+                Math.Abs(ov.GroupRect.Right - 980) < 1.0 && Math.Abs(ov.GroupRect.Bottom - 780) < 1.0);
+            Check("换锚点不改尺寸",
+                Math.Abs(ov.GroupRect.Width - w0) < 0.5 && Math.Abs(ov.GroupRect.Height - h0) < 0.5);
+
+            // ---- 拖动整体：吸附自动让位给手设位置 ----
+
+            Check("整块平移", ov.MoveGroup(-100, -50, area));
+            Check("拖整体后吸附自动关闭", s.SnapAnchor == (int)KvAnchor.Free);
+            DrawAdofai(ov, area);
+            Check(string.Format("整块位移正确（Δ {0:0.#},{1:0.#}）",
+                    ov.GroupRect.Right - 980, ov.GroupRect.Bottom - 780),
+                Math.Abs(ov.GroupRect.Right - 880) < 1.5 && Math.Abs(ov.GroupRect.Bottom - 730) < 1.5);
         }
 
         private static void Report(string what, int expect, int got)

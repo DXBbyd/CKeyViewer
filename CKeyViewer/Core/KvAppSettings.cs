@@ -31,6 +31,28 @@ namespace CKeyViewer.Core
         /// </summary>
         public bool DragOnlyPosition { get; set; }
 
+        /// <summary>
+        /// 界面主题：<c>"dark"</c> / <c>"light"</c>。
+        ///
+        /// 放在 settings.json 而不是档案里 —— 这是「这台机器上界面长什么样」，
+        /// 跟用哪个按键档案无关。jipper 读这个文件会忽略不认识的字段，不会互相干扰。
+        /// </summary>
+        public string Theme { get; set; } = "dark";
+
+        /// <summary>
+        /// 按键覆盖层窗口的吸附锚点（<see cref="KvAnchor"/>）。0 = 自由 ——
+        /// 那时位置由「布局」页的自定义位置 / 默认贴底居中决定。
+        /// 放在这里而不是档案里：它是「这块屏幕上怎么摆」，跟用哪套键位无关，
+        /// 也免得往 profiles/*.json 里加字段破坏与 jipper 的双向兼容。
+        /// </summary>
+        public int Anchor { get; set; }
+
+        /// <summary>吸附时离工作区边缘留出的空隙（DIP）。</summary>
+        public double AnchorMargin { get; set; } = 12;
+
+        /// <summary>吸附是否在窗口 / 分辨率变化后自动重算（动态吸附）。</summary>
+        public bool AnchorDynamic { get; set; } = true;
+
         public void Sanitize()
         {
             if (Version <= 0) Version = 6;
@@ -40,6 +62,10 @@ namespace CKeyViewer.Core
             if (string.IsNullOrWhiteSpace(CurrentProfile))
                 CurrentProfile = ProfileNames[0];
             if (UiTab < 0) UiTab = 0;
+            if (Theme != "light" && Theme != "dark") Theme = "dark";
+            Anchor = KvSnap.Clamp(Anchor);
+            if (double.IsNaN(AnchorMargin) || double.IsInfinity(AnchorMargin)) AnchorMargin = 12;
+            AnchorMargin = System.Math.Max(0, System.Math.Min(400, AnchorMargin));
         }
     }
 }

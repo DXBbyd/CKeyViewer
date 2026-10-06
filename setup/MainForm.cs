@@ -5,28 +5,38 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
+using CKeyViewer.Setup.Ui;
 
 namespace CKeyViewer.Setup
 {
     /// <summary>安装 / 卸载的单一窗口。控件全部手工布局，省掉设计器文件。</summary>
     internal sealed class MainForm : Form
     {
-        private static readonly Color Bg = Color.FromArgb(0xF6, 0xF7, 0xFA);
-        private static readonly Color Ink = Color.FromArgb(0x1F, 0x24, 0x30);
-        private static readonly Color Muted = Color.FromArgb(0x6B, 0x72, 0x80);
-        private static readonly Color Accent = Color.FromArgb(0x2F, 0x6F, 0xED);
-        private static readonly Font UiFont = ResolveFont();
+        private const int W = 480;
+        private const int Pad = 18;
 
         private readonly SetupOptions _opts;
         private readonly bool _uninstallMode;
 
+        private Panel _header;
         private TextBox _dir;
-        private Button _browse;
-        private CheckBox _desktop, _startMenu, _admin, _migrate, _keepConfig, _runNow;
+        private IosButton _browse, _themeBtn;
+        private IosToggle _desktop, _startMenu, _admin, _migrate, _keepConfig, _runNow;
+        private IosCard _card;
         private Label _lblDir, _hint, _author;
-        private ProgressBar _bar;
+        private IosBar _bar;
         private Label _status;
-        private Button _primary, _cancel;
+        private IosButton _primary, _cancel;
+        private PictureBox _avatar;
+
+        /// <summary>卡片里参与纵向排布的开关（顺序 = 显示顺序）。</summary>
+        private readonly System.Collections.Generic.List<IosToggle> _rows =
+            new System.Collections.Generic.List<IosToggle>();
+        private readonly System.Collections.Generic.HashSet<IosToggle> _hiddenRows =
+            new System.Collections.Generic.HashSet<IosToggle>();
+
+        /// <summary>顶部「安装位置」那两行是否还占位（装完之后就没必要了）。</summary>
+        private bool _topRowsOn = true;
 
         private bool _busy, _finished;
         private string _appExe;
@@ -54,16 +64,22 @@ namespace CKeyViewer.Setup
             _opts = opts;
             _uninstallMode = opts.Uninstall;
 
+            // 主题：优先跟随上次在程序里选过的那个，其次跟随 Windows 的「应用」主题。
+            Skin.Use(Skin.ReadAppTheme(AppInfo.SetupDir) ?? Skin.DetectSystemDark());
+
+            // Label 用 BackColor=Transparent 时，父容器必须支持透明背景
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.OptimizedDoubleBuffer, true);
+
             Text = _uninstallMode ? "卸载 CKeyViewer" : "安装 CKeyViewer";
+            UiFont = ResolveFont();
             Font = UiFont;
-            BackColor = Bg;
-            ForeColor = Ink;
+            BackColor = Skin.Bg;
+            ForeColor = Skin.Ink;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
             ShowIcon = true;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(468, 352);
             if (AppIcon != null) Icon = AppIcon;
 
             BuildHeader();
@@ -71,17 +87,35 @@ namespace CKeyViewer.Setup
 
             if (_uninstallMode) ConfigureForUninstall();
             else ConfigureForInstall();
+
+            ApplyTheme();
+            Relayout();
+        }
+
+        private void ApplyTheme()
+        {
+            BackColor = Skin.Bg;
+            ForeColor = Skin.Ink;
+            Skin.Apply(this);
+            _themeBtn.Text = Skin.Dark ? "浅色" : "深色";
+            _themeBtn.Invalidate();
+        }
+
+        private void OnToggleTheme(object sender, EventArgs e)
+        {
+            Skin.Use(!Skin.Dark);
+            ApplyTheme();
         }
 
         // ── 界面搭建 ──────────────────────────────────────────────
 
         private void BuildHeader()
         {
-            var header = new Panel { Dock = DockStyle.Top, Height = 64, BackColor = Ink };
+            _header = new IosPanel { Left = 0, Top = 0, Width = W, Height = 68, Tag = "header" };
 
             var icon = new PictureBox
             {
-                Left = 18, Top = 16, Width = 32, Height = 32,
+                Left = Pad, Top = 18, Width = 32, Height = 32,
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BackColor = Color.Transparent
             };
@@ -90,105 +124,215 @@ namespace CKeyViewer.Setup
                 if (AppIcon != null) icon.Image = AppIcon.ToBitmap();
             }
             catch { }
-            header.Controls.Add(icon);
+            _header.Controls.Add(icon);
 
-            header.Controls.Add(new Label
+            _header.Controls.Add(new Label
             {
                 Text = AppInfo.ProductName + "  " + AppInfo.Version,
-                Left = 62, Top = 14, Width = 380, Height = 22,
-                ForeColor = Color.White,
+                Left = Pad + 44, Top = 14, Width = 300, Height = 24,
                 Font = new Font(UiFont.FontFamily, 12f, FontStyle.Bold),
                 BackColor = Color.Transparent
             });
 
-            header.Controls.Add(new Label
+            _header.Controls.Add(new Label
             {
                 Text = _uninstallMode
                     ? "从这台电脑上移除 CKeyViewer"
                     : "按键可视化覆盖层 —— 置顶显示按键状态、KPS 与计数",
-                Left = 63, Top = 38, Width = 390, Height = 18,
-                ForeColor = Color.FromArgb(0xA8, 0xB0, 0xC0),
+                Left = Pad + 45, Top = 38, Width = 310, Height = 18,
                 Font = new Font(UiFont.FontFamily, 8.5f),
+                Tag = "muted",
                 BackColor = Color.Transparent
             });
 
-            Controls.Add(header);
+            _themeBtn = new IosButton(Skin.Dark ? "浅色" : "深色", BtnKind.Ghost)
+            {
+                Left = W - Pad - 68, Top = 20, Width = 68, Height = 28
+            };
+            _themeBtn.Click += OnToggleTheme;
+            _header.Controls.Add(_themeBtn);
+
+            Controls.Add(_header);
         }
 
         private void BuildBody()
         {
-            _lblDir = new Label { Left = 18, Top = 78, Width = 434, Height = 18, ForeColor = Muted, Text = "安装位置" };
+            _lblDir = new Label
+            {
+                Left = Pad, Top = 0, Width = W - Pad * 2, Height = 20,
+                Tag = "muted", BackColor = Color.Transparent, Text = "安装位置"
+            };
             Controls.Add(_lblDir);
 
-            _dir = new TextBox { Left = 18, Top = 98, Width = 330, Height = 24, BorderStyle = BorderStyle.FixedSingle };
+            _dir = new TextBox
+            {
+                Left = Pad, Top = 0, Width = W - Pad * 2 - 104, Height = 26,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Skin.Field, ForeColor = Skin.Ink
+            };
             Controls.Add(_dir);
 
-            _browse = new Button { Left = 356, Top = 97, Width = 94, Height = 26, Text = "浏览…", FlatStyle = FlatStyle.System };
+            _browse = new IosButton("浏览…", BtnKind.Plain)
+            {
+                Left = W - Pad - 96, Top = 0, Width = 96, Height = 28
+            };
             _browse.Click += OnBrowse;
             Controls.Add(_browse);
 
-            _desktop = MakeCheck(132, "创建桌面快捷方式", true);
-            _startMenu = MakeCheck(154, "添加到开始菜单", true);
-            _admin = MakeCheck(176, "以管理员权限运行（启动时自动弹出 UAC 提权）", true);
-            _migrate = MakeCheck(198, "迁移 setup.exe 旁边的 config /（如果存在）", false);
+            // ── 选项卡片 ──
 
-            _keepConfig = MakeCheck(98, "保留 config /（按键计数、配色与自定义布局）", true);
-            _keepConfig.Visible = false;
+            _card = new IosCard { Left = Pad, Top = 0, Width = W - Pad * 2 };
+            Controls.Add(_card);
+
+            _desktop = MakeToggle("创建桌面快捷方式", true);
+            _startMenu = MakeToggle("添加到开始菜单", true);
+            _admin = MakeToggle("以管理员权限运行（启动时自动弹出 UAC 提权）", true);
+            _migrate = MakeToggle("迁移 setup.exe 旁边的 config /（如果存在）", false);
+            _keepConfig = MakeToggle("保留 config /（按键计数、配色与自定义布局）", true);
 
             _hint = new Label
             {
-                Left = 18, Top = 224, Width = 434, Height = 32,
-                ForeColor = Muted, Font = new Font(UiFont.FontFamily, 8.5f),
-                Text = "主程序通过 GetAsyncKeyState 读取按键，权限不能低于你要观察的程序，\n"
+                Left = Pad, Top = 0, Width = W - Pad * 2, Height = 40,
+                Tag = "muted", BackColor = Color.Transparent,
+                Font = new Font(UiFont.FontFamily, 8.5f),
+                Text = "主程序通过 GetAsyncKeyState 读取按键，权限不能低于你要观察的程序，"
                      + "因此默认以管理员身份运行。安装本身不需要管理员，会装进你的用户目录。"
             };
             Controls.Add(_hint);
 
-            _bar = new ProgressBar { Left = 18, Top = 262, Width = 434, Height = 16, Style = ProgressBarStyle.Continuous };
+            _bar = new IosBar { Left = Pad, Top = 0, Width = W - Pad * 2, Height = 8 };
             Controls.Add(_bar);
 
-            _status = new Label { Left = 18, Top = 282, Width = 434, Height = 18, ForeColor = Ink, Text = "准备就绪" };
+            _status = new Label
+            {
+                Left = Pad, Top = 0, Width = W - Pad * 2, Height = 20,
+                BackColor = Color.Transparent, Text = "准备就绪"
+            };
             Controls.Add(_status);
 
-            _runNow = new CheckBox
+            _avatar = new PictureBox
             {
-                Left = 18, Top = 312, Width = 220, Height = 22,
-                Text = "立即运行 CKeyViewer", Checked = true, Visible = false,
-                FlatStyle = FlatStyle.System
+                Left = Pad, Top = 0, Width = 22, Height = 22,
+                SizeMode = PictureBoxSizeMode.StretchImage,
+                BackColor = Color.Transparent
             };
-            Controls.Add(_runNow);
-
-            // 作者信息占着左下角；装完之后那里要让给「立即运行」
-            Bitmap avatar = LoadAvatar(20);
-            if (avatar != null)
-            {
-                var pic = new PictureBox
-                {
-                    Left = 18, Top = 313, Width = 20, Height = 20,
-                    Image = avatar, SizeMode = PictureBoxSizeMode.StretchImage,
-                    BackColor = Color.Transparent
-                };
-                Controls.Add(pic);
-            }
+            Bitmap av = LoadAvatar(22);
+            if (av != null) { _avatar.Image = av; Controls.Add(_avatar); }
+            else _avatar = null;
 
             _author = new Label
             {
-                Left = avatar != null ? 44 : 18, Top = 315, Width = 230, Height = 18,
-                ForeColor = Muted, Font = new Font(UiFont.FontFamily, 8.5f),
-                Text = "作者 " + AppInfo.Author + "  ·  QQ " + AppInfo.AuthorQQ
-                     + "  ·  v" + AppInfo.Version
+                Left = _avatar != null ? Pad + 34 : Pad, Top = 0, Width = 200, Height = 22,
+                Tag = "muted", BackColor = Color.Transparent, AutoSize = false,
+                AutoEllipsis = true,
+                Font = new Font(UiFont.FontFamily, 8.5f),
+                Text = AppInfo.Author + "  ·  QQ " + AppInfo.AuthorQQ
             };
             Controls.Add(_author);
 
-            _primary = new Button { Left = 254, Top = 308, Width = 92, Height = 30, Text = "安装", FlatStyle = FlatStyle.System };
+            // 底部左侧是「装之前署名 / 装完换成开关」的同一块地方。
+            // 别忘了**一开始就藏起来** —— 它的轨道会从作者文字右边露出来，
+            // 而且它比署名晚 Add，Z 序在上面，正好压住按钮的左边角。
+            _runNow = MakeToggle("完成后立即运行", true, inCard: false);
+            _runNow.Left = Pad;
+            _runNow.Visible = false;
+            _runNow.Parent = this;
+
+            _primary = new IosButton("安装", BtnKind.Accent)
+            {
+                Left = W - Pad - 96, Top = 0, Width = 96, Height = 32
+            };
             _primary.Click += OnPrimary;
             Controls.Add(_primary);
 
-            _cancel = new Button { Left = 356, Top = 308, Width = 92, Height = 30, Text = "取消", FlatStyle = FlatStyle.System, DialogResult = DialogResult.Cancel };
+            _cancel = new IosButton("取消", BtnKind.Plain)
+            {
+                Left = W - Pad - 96 - 104, Top = 0, Width = 96, Height = 32,
+                DialogResult = DialogResult.Cancel
+            };
             Controls.Add(_cancel);
 
             AcceptButton = _primary;
             CancelButton = _cancel;
+        }
+
+        private IosToggle MakeToggle(string text, bool @checked, bool inCard = true)
+        {
+            var t = new IosToggle(text, @checked) { Left = 12 };
+            t.CheckedChanged += (s, e) => Relayout();
+            if (inCard)
+            {
+                t.Width = _card.Width - 24;
+                _card.Controls.Add(t);
+                _rows.Add(t);
+            }
+            return t;
+        }
+
+        /// <summary>
+        /// 显式记账某一行的显隐。
+        /// 不能直接读 <c>Visible</c> 来判断 —— 窗体还没 Show 时，子控件的
+        /// <c>Visible</c> 一律返回 false（它返回的是「有效可见性」），
+        /// 布局里就会把整页行都跳过去。第一版就栽在这里：卡片被压成 12px 高。
+        /// </summary>
+        private void ShowRow(IosToggle t, bool on)
+        {
+            if (on) _hiddenRows.Remove(t); else _hiddenRows.Add(t);
+            t.Visible = on;
+        }
+
+        /// <summary>把可见的开关自上而下码进卡片，再按剩下的高度把整页重新排一遍。</summary>
+        private void Relayout()
+        {
+            int y = 80;
+            const int rowH = 37;
+
+            if (_topRowsOn)
+            {
+                _lblDir.Top = y; y += 22;
+                _dir.Top = y; _browse.Top = y + 1; y += 40;
+            }
+
+            int cy = 0;
+            foreach (var t in _rows)
+            {
+                if (_hiddenRows.Contains(t)) continue;
+                t.Top = 6 + cy;
+                t.Width = _card.Width - 24;
+                cy += rowH;
+            }
+            _card.Height = cy + 12;
+            _card.Top = y;
+            y += _card.Height + 14;
+
+            if (_topRowsOn)
+            {
+                _hint.Top = y;
+                _hint.Height = Math.Max(32, TextRenderer.MeasureText(
+                    _hint.Text, _hint.Font, new Size(_hint.Width, 0),
+                    TextFormatFlags.WordBreak).Height + 4);
+                _hint.Visible = true;
+                y += _hint.Height + 12;
+            }
+
+            _bar.Top = y; y += _bar.Height + 12;
+            _status.Top = y; y += _status.Height + 12;
+
+            const int bottomH = 32;
+            _primary.Top = y;
+            _cancel.Top = y;
+
+            // 左侧那块地方只能是「署名」或「立即运行」二选一，宽度按取消按钮的左边缘现算，
+            // 免得写死数字之后一改窗体宽度就压到按钮上。
+            int leftRoom = _cancel.Left - Pad - 8;
+            if (_avatar != null) _avatar.Top = y + 5;
+            _author.Top = y + 6;
+            _author.Width = Math.Max(60, _cancel.Left - _author.Left - 10);
+            _runNow.Top = y - 2;
+            _runNow.Width = Math.Max(120, leftRoom);
+
+            ClientSize = new Size(W, y + bottomH + Pad);
+            _header.Width = W;
         }
 
         /// <summary>
@@ -198,6 +342,7 @@ namespace CKeyViewer.Setup
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+            Relayout();
             try
             {
                 _dir.SelectionStart = _dir.TextLength;
@@ -205,17 +350,6 @@ namespace CKeyViewer.Setup
                 _primary.Focus();
             }
             catch { }
-        }
-
-        private CheckBox MakeCheck(int top, string text, bool @checked)
-        {
-            var c = new CheckBox
-            {
-                Left = 18, Top = top, Width = 434, Height = 20,
-                Text = text, Checked = @checked, FlatStyle = FlatStyle.System
-            };
-            Controls.Add(c);
-            return c;
         }
 
         // ── 两种模式 ──────────────────────────────────────────────
@@ -244,18 +378,19 @@ namespace CKeyViewer.Setup
             _lblDir.Text = "即将卸载";
             _dir.Text = dir ?? "（找不到安装目录）";
             _dir.ReadOnly = true;
-            _dir.BackColor = Color.FromArgb(0xEC, 0xEE, 0xF2);
+            _dir.BackColor = Skin.HoverFill;
             _browse.Visible = false;
-            _desktop.Visible = false;
-            _startMenu.Visible = false;
-            _admin.Visible = false;
-            _migrate.Visible = false;
-            _keepConfig.Visible = true;
+            ShowRow(_desktop, false);
+            ShowRow(_startMenu, false);
+            ShowRow(_admin, false);
+            ShowRow(_migrate, false);
+            ShowRow(_keepConfig, true);
 
-            _hint.Text = "卸载会删除程序文件、快捷方式与「以管理员身份运行」标记。\n"
-                       + "是否保留 config / 由上面的勾选决定（推荐保留，里面有你的按键计数与配色）。";
+            _hint.Text = "卸载会删除程序文件、快捷方式与「以管理员身份运行」标记。"
+                       + "是否保留 config / 由上面的开关决定（推荐保留，里面有你的按键计数与配色）。";
 
             _primary.Text = "卸载";
+            _primary.Kind = BtnKind.Danger;
             _primary.Enabled = dir != null;
             _status.Text = dir != null ? "准备就绪" : "找不到 CKeyViewer 的安装信息";
         }
@@ -302,10 +437,11 @@ namespace CKeyViewer.Setup
 
             _busy = true;
             _primary.Enabled = false;
+            _primary.Invalidate();
             _bar.Value = 0;
             _dir.Enabled = false;
             _browse.Enabled = false;
-            _desktop.Enabled = _startMenu.Enabled = _admin.Enabled = _migrate.Enabled = false;
+            foreach (Control c in _card.Controls) c.Enabled = false;
             _cancel.Enabled = false;
 
             SetupOptions opts = _uninstallMode
@@ -319,12 +455,18 @@ namespace CKeyViewer.Setup
                 };
 
             bool uninstall = _uninstallMode;
+            bool dark = Skin.Dark;
+            string installDir = _opts.Dir;
 
             var th = new Thread(delegate ()
             {
                 int rc = uninstall
                     ? Uninstaller.Begin(opts.KeepConfig, Report)
                     : Installer.Run(opts, Report);
+
+                // 装完把主题也写进新装的 config，免得「安装包里选了浅色，打开程序还是深色」
+                if (rc == 0 && !uninstall) Installer.WriteInitialTheme(installDir, dark);
+
                 try { BeginInvoke(new Action(delegate () { Finish(rc); })); }
                 catch (Exception) { /* 窗口已经关了 */ }
             });
@@ -352,9 +494,12 @@ namespace CKeyViewer.Setup
             _busy = false;
             if (rc != 0)
             {
-                _status.ForeColor = Color.FromArgb(0xC0, 0x39, 0x2B);
+                _status.Tag = "err";
+                _status.ForeColor = Skin.Danger;
                 _primary.Text = "关闭";
+                _primary.Kind = BtnKind.Plain;
                 _primary.Enabled = true;
+                _primary.Invalidate();
                 _finished = true;
                 _cancel.Visible = false;
                 _bar.Value = 0;
@@ -362,13 +507,15 @@ namespace CKeyViewer.Setup
             }
 
             _finished = true;
-            _status.ForeColor = Color.FromArgb(0x1B, 0x7F, 0x4B);
+            _status.Tag = "ok";
+            _status.ForeColor = Skin.Ok;
 
             if (_uninstallMode)
             {
                 _bar.Value = 100;
                 _primary.Text = "完成";
                 _primary.Enabled = true;
+                _primary.Invalidate();
                 _cancel.Visible = false;
                 return;
             }
@@ -377,9 +524,19 @@ namespace CKeyViewer.Setup
             _bar.Value = 100;
             _primary.Text = "完成";
             _primary.Enabled = true;
+            _primary.Invalidate();
             _author.Visible = false;
+            if (_avatar != null) _avatar.Visible = false;
             _runNow.Visible = true;
-            _cancel.Visible = false;
+
+            // 装完这里只剩「立即运行」和两个按钮，安装位置那两行就没必要占地方了
+            _topRowsOn = false;
+            _lblDir.Visible = false;
+            _dir.Visible = false;
+            _browse.Visible = false;
+            _hint.Visible = false;
+            foreach (Control c in _card.Controls) c.Enabled = true;
+            Relayout();
         }
 
         /// <summary>
@@ -414,6 +571,8 @@ namespace CKeyViewer.Setup
             }
             catch { return null; }
         }
+
+        private static Font UiFont;
 
         /// <summary>优先用「微软雅黑 UI」，没有就退回系统默认，避免中文糊成方块。</summary>
         private static Font ResolveFont()

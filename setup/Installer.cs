@@ -223,6 +223,39 @@ namespace CKeyViewer.Setup
         // ── config 迁移 ───────────────────────────────────────────
 
         /// <summary>
+        /// 把安装包里选的浅色 / 深色写进新装的 config/settings.json。
+        /// 只在目标文件**不存在**时写 —— 已经有配置（升级安装 / 迁移过来的）就一个字都不动，
+        /// 免得把用户的档案、计数和主题改掉。
+        /// </summary>
+        public static void WriteInitialTheme(string dir, bool dark)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(dir)) return;
+
+                string cfgDir = Path.Combine(dir, "config");
+                string path = Path.Combine(cfgDir, "settings.json");
+                if (File.Exists(path)) return;
+
+                Directory.CreateDirectory(cfgDir);
+                string json =
+                    "{\r\n" +
+                    "  \"Version\": 6,\r\n" +
+                    "  \"CurrentProfile\": \"Default\",\r\n" +
+                    "  \"ProfileNames\": [\r\n    \"Default\"\r\n  ],\r\n" +
+                    "  \"Language\": \"zh\",\r\n" +
+                    "  \"UiTab\": 0,\r\n" +
+                    "  \"Theme\": \"" + (dark ? "dark" : "light") + "\"\r\n" +
+                    "}\r\n";
+                File.WriteAllText(path, json, new System.Text.UTF8Encoding(false));
+            }
+            catch
+            {
+                // 写不进去无所谓：程序启动时会用自己的默认值（深色）
+            }
+        }
+
+        /// <summary>
         /// 如果 setup.exe 隔壁放着一份 <c>config/</c>（例如从旧目录拷过来），就顺手带进安装目录。
         /// 同名的旧文件先备份成 <c>*.before-install</c>，一个字节都不覆盖掉。
         /// </summary>

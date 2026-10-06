@@ -48,6 +48,9 @@ namespace CKeyViewer.Core
         public string SettingsPath => Path.Combine(Root, "settings.json");
         public string ProfilesDir => Path.Combine(Root, "profiles");
 
+        /// <summary>ADOFAI Overlayer 的独立配置（不进档案，避免破坏与 jipper 的字段兼容）。</summary>
+        public string AdofaiPath => Path.Combine(Root, "adofai.json");
+
         // ---------------------------------------------------------------
         // 状态
         // ---------------------------------------------------------------
@@ -432,7 +435,7 @@ namespace CKeyViewer.Core
         // 底层 IO
         // ---------------------------------------------------------------
 
-        private static T ReadJson<T>(string path) where T : class
+        public static T ReadJson<T>(string path) where T : class
         {
             string text = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(text)) return null;
@@ -440,7 +443,7 @@ namespace CKeyViewer.Core
         }
 
         /// <summary>先写 .tmp 再原子替换，避免断电/崩溃把配置写坏（原版 WriteAllTextSafe 同款策略）。</summary>
-        private static void WriteJson<T>(string path, T value)
+        public static void WriteJson<T>(string path, T value)
         {
             string dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);

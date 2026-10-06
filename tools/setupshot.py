@@ -1,9 +1,12 @@
 """给安装程序窗口拍一张截图，用于 README。
 
-用法: python setupshot.py <setup.exe 路径> <输出 png> [标题关键字]
+用法: python setupshot.py <setup.exe 路径> <输出 png> [标题关键字] [传给 setup.exe 的参数...]
 
 流程：拉起 GUI 安装程序 → 轮询 EnumWindows 找窗口 → PrintWindow 渲染窗口内容 →
 存 PNG → 结束进程。全程不点任何按钮，不会真的安装。
+
+想拍卸载界面就追加 --uninstall：
+    python setupshot.py <setup.exe> out.png "卸载 CKeyViewer" --uninstall
 
 用 PrintWindow(PW_RENDERFULLCONTENT) 而不是抓屏：窗口可能被别的程序压住
 （比如用户正玩着的游戏），抓屏只会拍到压在上面的东西。
@@ -111,8 +114,9 @@ def main():
     exe = sys.argv[1]
     out = sys.argv[2]
     needle = sys.argv[3] if len(sys.argv) > 3 else "CKeyViewer"
+    extra = sys.argv[4:]
 
-    proc = subprocess.Popen([exe], cwd=os.path.dirname(os.path.abspath(exe)))
+    proc = subprocess.Popen([exe] + extra, cwd=os.path.dirname(os.path.abspath(exe)))
     try:
         win = find_window(needle)
         if not win:

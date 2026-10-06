@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -32,7 +32,7 @@
     <Product>CKeyViewer</Product>
     <Company>DXBbyd</Company>
     <Authors>DXBbyd</Authors>
-    <Description>置顶显示按键按下状态、KPS 雨线与按键计数；配置格式与 JipperKeyViewer 双向兼容。</Description>
+    <Description>置顶显示按键按下状态、KPS 雨线与按键计数；可读取冰与火之舞（ADOFAI）实时信息；配置格式与 JipperKeyViewer 双向兼容。</Description>
     <Copyright>Copyright © 2026 DXBbyd · QQ 3157037483</Copyright>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
   </PropertyGroup>

@@ -6,8 +6,6 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 
 > 作者 **DXBbyd** · QQ `3157037483` · 仓库 <https://github.com/DXBbyd/CKeyViewer>
 
-![覆盖层](docs/screenshots/01-overlay.png)
-
 > 按住 A / S / D：键帽高亮为白底、雨线从键帽上方升起，每个键下方是累计点击次数，底部是 KPS 与 Total。
 
 ---
@@ -27,25 +25,17 @@ Windows 上的**按键可视化覆盖层**（KeyViewer）—— 透明置顶窗�
 | **按压缩放** | 按下缩到指定倍数、松开弹回；27 条缓动曲线；可选雨线跟随缩放 |
 | **统计** | KPS 实时速率、Total 累计总数、每键计数；支持居中 / 堆叠 / 独立位置 |
 | **自由布局** | 每个元素是一个可拖拽的「节点」，位置 / 尺寸 / 层级 / 配色 / 按键绑定全可调，支持图层组与图片节点；**在覆盖层上直接拖动摆放** |
+| **ADOFAI** | 叠加显示**冰与火之舞**实时信息（Combo + 状态标题 / 准确率 / X-精准度 / 进度 / BPM / 判定分布 / 死亡·检查点·尝试）—— **完全不需要装 Mod、不碰游戏目录**。信息层是**铺满工作区的独立窗口**，每个元素都能单独拖到屏幕任意位置 |
 | **档案** | 多档案热切换，与 jipper 的 `profiles/*.json` 一一对应 |
-| **界面** | 深色设置面板（12 个标签页，含「关于」），改动即时生效 + 防抖落盘；系统托盘；5 组全局热键（带备选） |
-| **安装** | 单文件 `CKeyViewerSetup.exe`，装到用户目录、建快捷方式、**默认以管理员运行**，可从「设置 → 应用」卸载 |
-
-![设置面板](docs/screenshots/02-settings.png)
-![Full108 全键盘](docs/screenshots/03-full108.png)
-![按压动画与每键配色](docs/screenshots/04-press-animation.png)
-![KPS 实时统计](docs/screenshots/05-kps-live.png)
-![自由布局](docs/screenshots/07-custom-layout.png)
-![布局模式拖动](docs/screenshots/08-layout-mode.png)
-![自由布局编辑器](docs/screenshots/09-custom-editor.png)
+| **吸附** | 独立「吸附」页：九宫格锚点（左上 / 中上 / 右上 / 左中 / 正中 / 右中 / 左下 / 中下 / 右下 + 自由摆放）、离边缘边距、**动态吸附** —— 分辨率 / 任务栏 / DPI 一变就自动重新吸上，只改位置**不改大小** |
+| **界面** | **iPhone App Store 风格**的浅色 / 深色设置面板（14 个标签页，含「吸附」与「关于」），主题在设置里随时切换、立即重建；改动即时生效 + 防抖落盘；托盘菜单同一套外观（圆角卡片、强调色高亮、勾选栏、危险项红字） |
+| **安装** | 单文件 `CKeyViewerSetup.exe`，装到用户目录、建快捷方式、**默认以管理员运行**，可从「设置 → 应用」卸载；安装界面同样是 App Store 风格，自带浅色 / 深色切换与按键反馈 |
 
 ---
 
 ## 安装
 
-![安装程序](docs/screenshots/11-setup.png)
-
-下载 `CKeyViewerSetup.exe`，双击即可。**安装本身不需要管理员权限** —— 它只是把文件放进你的用户目录。
+下载 `CKeyViewerSetup-1.1.0.exe`，双击即可。**安装本身不需要管理员权限** —— 它只是把文件放进你的用户目录。
 
 | 步骤 | 说明 |
 | --- | --- |
@@ -118,8 +108,6 @@ echo 退出码 %errorlevel%
 ---
 
 ## 必须管理员运行
-
-![需要管理员权限](docs/screenshots/10-admin-required.png)
 
 程序启动时会先检查自己是否以管理员身份（高完整性级别）运行。**不是就直接弹这个提示，然后结束进程**。
 
@@ -211,8 +199,6 @@ tools/build_setup.sh D:\out             # 指定输出目录
 
 ### 绑定按键
 
-![按键绑定](docs/screenshots/06-key-binding.png)
-
 在「按键绑定」页或「自由布局」页的节点里点一下绑定按钮，它变成「请按键…」，然后按下你想绑的键即可。
 
 - **支持修饰键**：可以单独绑 `Shift` / `Ctrl` / `Alt`，而且是**左右分开**的
@@ -232,12 +218,32 @@ CKeyViewer.exe --selftest            # 结果写到 exe 同级的 ckv_selftest.t
 CKeyViewer.exe --selftest D:\out.txt
 ```
 
-跑一遍无界面的逻辑自检（键盘修饰键 / 鼠标键 / 边界情况），用来确认按键捕获没被改坏。
+跑一遍无界面的逻辑自检，用来确认核心逻辑没被改坏。目前 **90 项断言**：
+
+| 段落 | 覆盖内容 |
+| --- | --- |
+| 按键捕获 | 左右区分的 Shift / Ctrl / Alt、鼠标左右中侧键、修饰键单独按下、起始已按下的键要记账、泛用 VK 不误绑 |
+| ADOFAI 配置 | `adofai.json` 往返读写、越界值收敛 |
+| 吸附几何 | 九个锚点 + 偏移工作区 + 超大块不越界 + 锚点越界收敛成「自由」 |
+| 信息层元素 | **走真实绘制路径**（`DrawingContext` → 回读矩形）验证 8 个元素的排列、命中测试、拖动位移、边缘夹取、隐藏与换锚点不改尺寸 |
+| 托盘菜单皮肤 | 渲染器可构造、调色板真的接到了 `ProfessionalColorTable`（漏接的症状就是「菜单是一张纯白卡片」） |
+
+之所以把后面几段也塞进 `--selftest`：本机**没法合成鼠标输入**
+（`SendInput` / `SetCursorPos` 是空操作，光标永远停在屏幕正中），
+拖动、吸附这类交互只能靠「跑同一段绘制代码再回读结果」来验证，而不是模拟点击。
 
 ### 系统托盘
 
-托盘图标读程序集里嵌入的 `app.ico`（9 档尺寸，由 `icon/icon.png` 生成），右键菜单：
-显示/隐藏、重置计数、切换档案、**自由布局**、设置、打开配置目录、退出。
+托盘图标读程序集里嵌入的 `app.ico`（9 档尺寸，由 `icon/icon.png` 生成），右键菜单按 iOS 的习惯
+分成三组（圆角卡片、悬停整行铺强调色淡底、勾选是强调色对勾、危险项为红字）：
+
+- **显示 / 隐藏**、**重置计数**（红字）
+- **吸附位置** ▸ 九宫格锚点 + 自由摆放，当前项打勾；**切换档案** ▸；**自由布局：拖动调整位置**；
+  **ADOFAI 信息覆盖层**（勾选态，标题里带连接状态）、**拖动摆放信息层**
+- **设置…**、**ADOFAI 覆盖层设置…**、**关于 CKeyViewer…**、**打开配置目录**、**退出**（红字）
+
+菜单配色跟着设置里的主题走，面板里刚从深色切到浅色，下次弹出就是浅色。
+
 双击图标等同「显示 / 隐藏」。
 
 > Windows 11 默认把新注册的托盘图标收进「隐藏的图标」折叠区，需要点托盘左侧的 `^` 才能看到。
@@ -245,9 +251,37 @@ CKeyViewer.exe --selftest D:\out.txt
 
 ### 设置面板
 
-12 个标签页：**档案 / 布局 / 自由布局 / 外观 / 文字 / 雨线 / 按键绑定 / 每键配色 / 按压动画 / 统计 / 热键信息 / 关于**。
+14 个标签页：**档案 / 布局 / 吸附 / 自由布局 / 外观 / 文字 / 雨线 / 按键绑定 / 每键配色 /
+按压动画 / 统计 / ADOFAI / 热键信息 / 关于**。
 所有改动即时生效，600 ms 防抖后写入磁盘；面板会记住上次停留的标签页。
 托盘菜单的「关于 CKeyViewer…」会直接跳到最后一页。
+
+界面照抄 iOS 的 App Store：左侧标签栏 + 右侧成组卡片、圆角开关、分段控件、底部说明文字。
+**「外观」页可以切浅色 / 深色**，切完整个面板（包括托盘菜单）立刻换成另一套配色。
+
+---
+
+## 吸附与摆位
+
+一块覆盖层想稳稳待在屏幕角落，靠的是「吸附」页（或托盘 →「吸附位置」）：
+
+- **九宫格锚点**：左上 / 中上 / 右上 / 左中 / 正中 / 右中 / 左下 / 中下 / 右下，加第 10 个选项「自由摆放」。
+- **离边缘的边距**（0–160）：吸附点离工作区边缘留多少空。
+- **动态吸附**：勾上之后，窗口 / 分辨率 / 任务栏 / DPI 缩放一变就自动重新吸到新位置。
+
+三条硬约束，都是踩过坑才定下来的：
+
+1. **只改位置，绝不改大小。** 吸附不会顺手帮你缩放覆盖层。
+2. **对着「工作区」吸附**，不是整块屏幕 —— 工作区是即时算出来的「屏幕减掉任务栏」，
+   所以吸到「左下」不会压在任务栏图标上。副屏在左边（工作区原点为负）也能算对。
+3. **动态吸附是每帧重新读工作区**，而不是只听 `DisplaySettingsChanged` 事件
+   —— 那个事件在「只改任务栏高度」「拖到另一块 DPI 不同的屏」这些情况下会漏掉。
+
+自由布局（`KeyViewerStyle = Custom`）时节点各自定位，吸附对覆盖层不生效 ——
+面板里会直接把这句提示出来，不会让你对着一个没反应的开关发呆。
+
+冰与火之舞的信息层有**自己的一套锚点**（在「吸附」页下半部分，「自动排列」勾上时才生效），
+和按键覆盖层互不干扰。
 
 ---
 
@@ -255,8 +289,6 @@ CKeyViewer.exe --selftest D:\out.txt
 
 预设布局（Key8 / Key16 / Full108 …）只能整体缩放和摆放，想「把 A 放到左上角、KPS 条放到中间」
 就得用自由布局。它在配置里对应 jipper 的 `CustomNodes` / `LayerGroups` 两组字段，**双向兼容**。
-
-![自由布局](docs/screenshots/07-custom-layout.png)
 
 ### 画布坐标
 
@@ -308,8 +340,6 @@ CanvasWidth = 1080 * ScreenWidth / ScreenHeight
 
 ### 在屏幕上拖动摆放
 
-![布局模式拖动](docs/screenshots/08-layout-mode.png)
-
 按 `Ctrl+Alt+L`（占用时自动退到 `Ctrl+Alt+F8`）或点托盘菜单的「自由布局：拖动调整位置」进入**布局模式**：
 
 - 覆盖层叠加一层**参考网格**（每 60 单位一条淡线、每 540 单位一条亮线），每个节点外面套一圈虚线框；
@@ -322,8 +352,6 @@ CanvasWidth = 1080 * ScreenWidth / ScreenHeight
 > 一路按下去会把节点悄悄带偏。需要时在「自由布局」页勾选「允许用方向键微调选中节点」。
 
 ### 编辑器
-
-![自由布局编辑器](docs/screenshots/09-custom-editor.png)
 
 「自由布局」标签页里可以：开关自定义布局、从当前预设一键生成节点（Full108 除外）、
 增删 / 复制 / 置顶 / 置底节点、用**精确数值**调 X / Y / 宽 / 高 / 层级、
@@ -362,6 +390,77 @@ CanvasWidth = 1080 * ScreenWidth / ScreenHeight
 
 ---
 
+## 冰与火之舞（ADOFAI）信息覆盖层
+
+在按键覆盖层上再叠一层 ADOFAI 的实时信息，效果对标 **JipperOverlayer** ——
+但**不需要安装任何 Mod，也不需要 UMM / MelonLoader，游戏目录不会被写入任何文件**。
+
+### 怎么开
+
+托盘右键 →「**ADOFAI 信息覆盖层**」，或者 设置面板 →「**ADOFAI**」标签页 → 勾选「启用」。
+
+用法：先启动冰与火之舞（Steam 版），再启用本功能；**进入关卡后**数字才会出现。
+设置页会实时显示连接状态（未启用 / 未连接 / 已连接（等待进入关卡）/ 已连接（关卡中））与当前读数。
+
+> 本程序需要保持**管理员运行**，否则读不到更高完整性级别的游戏进程。和按键功能是同一个原因。
+
+### 显示内容
+
+对齐 JipperOverlayer 的元素命名，每一项都可以单独开关：
+
+| 元素 | 说明 |
+| --- | --- |
+| **Combo** | 连击数。**游戏里没有这个字段**，是按判定序列自己算的（JipperOverlayer 也一样） |
+| **状态标题** | `PERFECT PLAY` / `PERFECTIONIST` / `AUTO-TILE` |
+| **准确率 ACC** | 游戏内的 `percentAcc` |
+| **X-精准度 X-ACC** | 游戏内的 `percentXAcc` |
+| **进度 PROG** | `当前砖块 / 总砖块 (百分比)` |
+| **BPM** | 当前 BPM |
+| **判定分布** | 每个出现过的判定档位各占一行 + 总数（`Perfect` / `Early Perfect` / `Miss` … ） |
+| **死亡 / 检查点 / 尝试** | `Deaths` / `CP` / `Try`；尝试次数用 `deaths + 1` 表示「第几次尝试」 |
+
+连击规则里有两个开关，对应原版的 `AllowELCombo` / `EnableAutoCombo`：
+`Early/Late Perfect` 是否计入连击、自动砖是否计入连击。
+
+### 摆放
+
+信息层**不跟按键覆盖层共用那块小窗口** —— 它有自己的、铺满工作区的透明置顶窗口
+（`AdofaiWindow`）。所以每个元素都能拖到屏幕的任何位置，不会被键帽窗口的边界框住。
+
+- **自动排列**（默认开）：所有元素自上而下码成一列，整列跟着「吸附」页里信息层那套九宫格走。
+- 想单独摆某一项：在「ADOFAI」页的「正在编辑」里选中它，点「▶ 在屏幕上拖动摆放」，
+  或者托盘 →「拖动摆放信息层」。**第一次拖动会自动退出自动排列**，并把当前的列布局
+  写进每个元素自己的坐标 —— 拖走「判定分布」不会带着整列一起动。
+- 每个元素还有自己的**对齐方式**（左 / 中 / 右）、**字号倍率**、**单独配色**。
+  除 Combo 与状态标题默认居中，其余默认靠左，这样 ACC / X-ACC / PROG 几列能对齐。
+
+文字 / 标签 / 标题三种配色、描边粗细、行间距、粗斜体、自定义字体也都能在「ADOFAI」页调，改完即时生效。
+`LabelConfig`（九个标签文案，含 `Deaths {0}   CP {1}   Try {2}` 这种带占位符的）也搬过来了，
+在「文案」一节里可以逐条改，或一键恢复默认。
+
+### 原理（为什么不用装 Mod）
+
+JipperOverlayer 是一个 **UMM Mod**，靠 Harmony 在游戏进程**内部**反射取值，外部程序拿不到。
+本程序的做法是**跨进程直接调用游戏自带的 Mono 运行时**（`mono-2.0-bdwgc.dll`）的公开 C API
+—— `mono_class_from_name` / `mono_class_get_field_from_name` / `mono_field_get_offset` /
+`mono_class_vtable` / `mono_field_static_get_value` 等，全部是 Mono 对外承诺、多年稳定的 ABI，
+而不是逆向出来的内部结构体偏移，所以游戏小版本更新后不容易失效。
+
+流程：`VirtualAllocEx` → 写入一段 shellcode → `CreateRemoteThread` 让游戏进程自己执行 →
+`ReadProcessMemory` 取回结果。所有调用塞进**同一段 shellcode**（`mono_thread_attach` 只对调用它的线程生效，
+分散到多个远程线程会让后续调用处于未附加状态而**把游戏搞崩**），字段解析分两阶段先校验指针非空再算偏移。
+
+配置写在 `config/adofai.json`，**独立于档案**（档案要保持与 jipper 逐字段兼容，多字段会破坏互读）。
+
+### 目前没做的元素
+
+原版 `DisplayElement` 枚举一共 22 项，本实现覆盖了上表这些。下面这些**暂未实现**：
+`MusicTime` / `MapTime` / `Best` / `TimingScale` / `FPS` / `Author` / `Start` /
+`Timing` / `AvgTiming` / `XScore` / `Potential*`（潜在准确率一类）。
+它们的游戏字段还没逐个验证，宁可不显示也不显示错数。
+
+---
+
 ## 与 jipper 的配置兼容性
 
 目录结构与 jipper 完全一致：
@@ -370,6 +469,9 @@ CanvasWidth = 1080 * ScreenWidth / ScreenHeight
 <exe 同级>/config/settings.json           # 全局设置（当前档案、档案列表、界面状态）
 <exe 同级>/config/profiles/<档案名>.json   # 单个档案，202 项配置
 ```
+
+ADOFAI 覆盖层另存 `config/adofai.json` —— **故意不写进档案**：
+档案要保持与 jipper 逐字段互读，多一个字段就会破坏兼容。
 
 因此：
 
@@ -412,7 +514,7 @@ CKeyViewer/                    主程序
 ├─ KvHost.cs               主循环：输入捕获、按键状态、统计、雨线驱动、防抖落盘、布局模式拖动
 ├─ KvTray.cs               托盘图标与菜单（读嵌入资源 CKeyViewer.app.ico）
 ├─ KvHotkeys.cs            全局热键（主选 + 备选）
-├─ KvSettingsWindow.cs     深色设置面板（12 个标签页，含自由布局编辑器与关于页）
+├─ KvSettingsWindow.cs     深色设置面板（13 个标签页，含自由布局编辑器、ADOFAI 页与关于页）
 ├─ Core/
 │  ├─ KvGeometry.cs        8 种主键 + 8 种脚键的布局几何表
 │  ├─ KvProfile.cs         202 项配置模型 + 自由布局辅助（节点增删 / 图层组 / 排序过滤）
@@ -422,6 +524,10 @@ CKeyViewer/                    主程序
 │  ├─ KeyCodeMap.cs        Unity KeyCode ↔ 显示名 ↔ Win32 VK
 │  ├─ KvEasing.cs          27 条缓动曲线（逐条对齐原版）
 │  ├─ KeyStyle.cs / KeyRuntime.cs / RainDrop.cs / KvColor.cs
+├─ Adofai/                 ADOFAI（冰与火之舞）信息覆盖层
+│  ├─ AdofaiState.cs       一帧的状态快照 + 12 档判定枚举
+│  ├─ AdofaiReader.cs      跨进程调用游戏 Mono 运行时的读取器（不用 Mod）
+│  ├─ AdofaiOverlay.cs     配置模型 + 绘制
 ├─ Render/
 │  ├─ OverlayRenderer.cs   即时模式绘制：键帽 + 文字 + 计数 + 布局模式装饰层
 │  ├─ KvRainLayer.cs       雨线与鬼键雨线
@@ -441,7 +547,6 @@ setup/                         安装程序
 ├─ AppInfo.cs / SetupOptions.cs
 └─ payload/                构建时生成：主程序整包（已 gitignore）
 
-docs/screenshots/              README 用的截图
 tools/                         开发辅助脚本
 ```
 
@@ -455,12 +560,13 @@ tools/                         开发辅助脚本
 | --- | --- |
 | `makeicon.py` | 用 Pillow 从 `CKeyViewer/icon/icon.png` 生成 9 档多尺寸 `app.ico`（含 256 px，分级降采样） |
 | `build_setup.sh` | 一键打包：发布主程序 → 放进 `setup/payload/` → 发布安装程序 → `release/setup/CKeyViewerSetup.exe` |
-| `setupshot.py` | 拉起 GUI 安装程序并 `PrintWindow` 截它的窗口（不受遮挡影响），用于 README |
+| `setupshot.py` | 拉起 GUI 安装程序并 `PrintWindow` 截它的窗口（不受遮挡影响），用于 README。第 4 个参数起会原样传给 setup.exe，所以 `... out.png "卸载 CKeyViewer" --uninstall` 能拍卸载界面 |
 | `deadcode.py` | 粗粒度死代码扫描：找出只被声明、从没被引用的类型与成员 |
-| `runapp.py` | 启动调试版 → 等待 → 截图 → 读日志 → 结束（必须在同一进程里完成，后台会被回收） |
+| `runapp.py` | 启动调试版 → 等待 → 截图 → 读日志 → 结束（必须在同一进程里完成，后台会被回收）。`--env K=V` 可注入环境变量，配合 `CKV_OPEN_SETTINGS=<页>` / `CKV_LAYOUT=1` / `CKV_TRAYMENU=[子菜单名]` 就能不按键直达某个界面 |
 | `pecheck.py` | 解析 PE 资源目录，确认图标与版本信息真的嵌进了 exe |
 | `gen_fmnode.py` | 从反射导出反推 `KvFmNode.cs` 的 105 项字段与默认值 |
 | `screenshot.py` | 抓桌面截图（含分层窗口），可按矩形裁剪、整数倍放大 |
+| `overlayshot.py` | **只抓覆盖层自己的窗口**（`PrintWindow` + `PW_RENDERFULLCONTENT`），不必抓屏；`--desktop=` 还能顺手抓一张合成图。`--win=<标题关键字>` 改成按标题找窗口（抓设置面板用）；`--tab=<下标>` 是它的快捷写法，等价于 `--win="CKeyViewer 设置" --env=CKV_OPEN_SETTINGS=<下标>`；同样支持任意 `--env=` |
 | `crop.py` | 纯标准库裁剪 / 放大 PNG（不依赖 Pillow） |
 | `backdrop.py` | 自绘深色渐变背景窗口并定时顶到最前，让截图背景可复现 |
 | `docshot.py` / `docshot2.py` | 出文档截图：启动 → 铺背景 → 造按键活动 → 按窗口矩形裁剪 |
@@ -469,8 +575,6 @@ tools/                         开发辅助脚本
 | `keyup.py` | 强制释放按键 —— `press.py` 被强杀时异步键状态会永久卡在「按下」 |
 | `drag.py` / `scroll.py` | 模拟鼠标拖动 / 滚轮（验证覆盖层拖动与设置面板滚动） |
 | `sendchord.py` / `click.py` | 发送组合键 / 屏幕坐标点击（自动化 UI） |
-| `settingsshot.py` | 指定标签页启动设置面板，按日志里的窗口矩形精确裁剪 |
-| `appshot.py` | 同上，但走 Debug 构建的 `CKV_OPEN_SETTINGS` 自动进页面 —— **不发模拟按键**，用 `PrintWindow` 抓图 |
 | `migrate_config.py` | 把一个安装目录的 `config/` 迁移到另一个（迁移前务必先关掉目标目录里的程序） |
 | `admintest.py` | 验证「非管理员 → 弹窗 + 终止进程」；只枚举窗口与截屏，**不发送任何键鼠输入** |
 | `customuitest.py` | 「自由布局」设置页交互回归（滚动 + 点击 + 异常扫描） |
@@ -499,6 +603,12 @@ tools/                         开发辅助脚本
 - 鬼键雨线的代码路径已就绪，但默认配置里 `GhostKey*` 全为 0，需要先在「按键绑定」页绑定鬼键才能看到效果。
 - 安装程序**同时只支持一份安装**：卸载信息与快捷方式用的是固定的名字，
   在第二个目录上跑一次卸载会把第一份的快捷方式与「应用」列表项一并清掉（安装目录本身不受影响）。
+- 托盘右键菜单为了圆角卡片的效果关掉了系统投影，只留 1px 描边；纯白桌面上的层次感比原生菜单弱一些。
+- ADOFAI 的**真实演奏中**的连击数与判定分布尚未实测（连接、字段偏移、准确率交叉验证都已通过），
+  关卡结束后 `deaths` 是否归零会影响「尝试次数」的语义，也待确认。
+- ADOFAI 元素的拖动依赖「鼠标压在元素上」，**这台开发机没法合成鼠标输入**
+  （`SendInput` / `SetCursorPos` 都是空操作，光标固定在屏幕正中），
+  所以拖拽逻辑是靠 `--selftest` 走真实绘制路径回读矩形来验证的，没有真机手动拖过一遍。
 
 ---
 
@@ -522,19 +632,15 @@ python tools/migrate_config.py <源目录> <目标目录>
 
 ## 关于
 
-![关于页](docs/screenshots/12-about.png)
-
 设置面板的最后一页就是「关于」：作者头像、QQ、仓库地址、版本号、上游项目与声明，都在这里。
 托盘菜单的「关于 CKeyViewer…」可以直接跳过去。
-
-<img src="docs/avatar.png" width="112" alt="作者头像">
 
 | | |
 | --- | --- |
 | 作者 | **DXBbyd** |
 | QQ | `3157037483` |
 | 仓库 | <https://github.com/DXBbyd/CKeyViewer> |
-| 版本 | 1.0.0（`CKeyViewer.exe --selftest` 会打印映射表，界面标题栏也带版本号） |
+| 版本 | 1.1.0（`CKeyViewer.exe --selftest` 会打印映射表，界面标题栏也带版本号） |
 
 ---
 

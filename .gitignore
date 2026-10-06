@@ -23,6 +23,7 @@ config/
 
 # ── 逆向与参考素材：原版 DLL 与反编译产物，不入库 ──────────
 jipper/
+JipperOverlayer/
 re/
 _archive_c_impl/
 

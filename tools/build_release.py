@@ -1,4 +1,4 @@
-"""把发布资产整理到 release/ 下，供 GitHub Release 上传。
+﻿"""把发布资产整理到 release/ 下，供 GitHub Release 上传。
 
 用法: python tools/build_release.py
 
@@ -73,7 +73,8 @@ README_TXT = u"""CKeyViewer 按键可视化覆盖层
 
   CKeyViewer.exe --selftest
 
-跑一遍无界面的按键捕获自检（20 项断言），结果写到 exe 同级的 ckv_selftest.txt。
+跑一遍无界面的逻辑自检（90 项断言：按键捕获 / 吸附几何 / 信息层元素布局 / 菜单皮肤），
+结果写到 exe 同级的 ckv_selftest.txt。
 
 ────────────────────────────────────────────
 许可

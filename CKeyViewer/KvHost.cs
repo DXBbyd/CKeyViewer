@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -77,6 +78,7 @@ namespace CKeyViewer
                 _dirty = false;
                 SavePendingStats();
                 Store.SaveAll();
+                SaveAdofaiSettings();
             };
 
             // 布局模式：每 16ms 判断鼠标是否压在节点上，据此动态开关鼠标穿透；
@@ -107,6 +109,72 @@ namespace CKeyViewer
             _dirty = false;
             FlushStats();
             Store.SaveSettings();
+            SaveAdofaiSettings();
+        }
+
+        // ---------------------------------------------------------------
+        // ADOFAI 配置（config/adofai.json，独立于档案）
+        // ---------------------------------------------------------------
+
+        /// <summary>ADOFAI 覆盖层设置（设置界面与渲染器共用同一份实例）。</summary>
+        public Adofai.AdofaiSettings AdofaiSettings => _adofaiOverlay.Settings;
+
+        private void LoadAdofaiSettings()
+        {
+            try
+            {
+                string path = Store.AdofaiPath;
+                if (File.Exists(path))
+                {
+                    var s = KvProfileStore.ReadJson<Adofai.AdofaiSettings>(path);
+                    if (s != null) _adofaiOverlay.Settings = s;
+                }
+                _adofaiOverlay.Settings.Sanitize();
+            }
+            catch (Exception ex)
+            {
+                Diag.Log("adofai.json 读取失败：" + ex.Message);
+            }
+        }
+
+        public void SaveAdofaiSettings()
+        {
+            try
+            {
+                _adofaiOverlay.Settings.Sanitize();
+                KvProfileStore.WriteJson(Store.AdofaiPath, _adofaiOverlay.Settings);
+            }
+            catch (Exception ex)
+            {
+                Diag.Log("adofai.json 写入失败：" + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 开关 ADOFAI 覆盖层。开启时立刻把重试计时器清零（否则要等最多 2 秒才去连游戏）；
+        /// 关闭时立刻断开并清屏，免得残留上一次的画面。
+        /// </summary>
+        public void SetAdofaiEnabled(bool on)
+        {
+            var st = _adofaiOverlay.Settings;
+            if (st.Enabled == on) return;
+
+            st.Enabled = on;
+            if (on)
+            {
+                _adofaiRetryAt = 0;
+                _adofaiSig = null;
+                SyncAdofaiWindow();
+            }
+            else
+            {
+                try { _adofai?.Dispose(); } catch { }
+                _adofai = null;
+                _adofaiOverlay.Visible = false;
+                if (_adofaiWin != null && _adofaiWin.IsVisible) _adofaiWin.Hide();
+                _window.Renderer?.Invalidate();
+            }
+            SaveAdofaiSettings();
         }
 
         /// <summary>雨线层 —— 触发/释放由本控制器负责，推进与绘制在层内完成。</summary>
@@ -115,6 +183,12 @@ namespace CKeyViewer
         public void Start()
         {
             Store.Load();
+
+            // 主题要在任何界面出现之前定下来 —— 画刷是冻结的，建完再换只对新控件生效
+            Ui.Kit.UseTheme(Ui.KvPalette.For(Store.Settings.Theme));
+
+            LoadAdofaiSettings();
+            _lastWorkArea = KvSnap.WorkArea;
             ApplyProfile();
             _timer.Start();
             _saveTimer.Start();
@@ -129,6 +203,13 @@ namespace CKeyViewer
             _saveTimer.Stop();
             FlushStats();
             Store.SaveSettings();
+            SaveAdofaiSettings();
+
+            try { _adofai?.Dispose(); } catch { }
+            _adofai = null;
+
+            try { _adofaiWin?.Close(); } catch { }
+            _adofaiWin = null;
         }
 
         // ---------------------------------------------------------------
@@ -631,7 +712,23 @@ namespace CKeyViewer
             double wDip = Math.Max(1, blockWidth * scale);
             double hDip = Math.Max(1, blockHeight * scale);
 
-            if (P.CustomPositionEnabled && !KvGeometry.IsCustom(P.StyleEnum))
+            int anchor = KvSnap.Clamp(Store.Settings.Anchor);
+            bool custom = KvGeometry.IsCustom(P.StyleEnum);
+
+            if (anchor != 0 && !custom)
+            {
+                // 吸附：把整块按键贴到工作区九宫格的某个位置。
+                // 只改位置、绝不改大小；工作区一变（分辨率 / 任务栏 / 缩放）
+                // 下一次 Tick 会重新走这里，这就是「动态吸附」。
+                var work = KvSnap.WorkArea;
+                if (KvSnap.Place(anchor, Store.Settings.AnchorMargin, wDip, hDip, work,
+                                 out double sx, out double sy))
+                {
+                    _window.Left = sx;
+                    _window.Top = sy;
+                }
+            }
+            else if (P.CustomPositionEnabled && !custom)
             {
                 // 自定义位置：完全按原版的归一化画布公式（0..1 映射到整块屏幕）
                 double nx = Math.Clamp(P.MainKeyViewerPosition.x, 0f, 1f);
@@ -649,7 +746,7 @@ namespace CKeyViewer
                 _window.Left = leftPx / dpi;
                 _window.Top = topPx / dpi;
             }
-            else if (KvGeometry.IsCustom(P.StyleEnum))
+            else if (custom)
             {
                 // 自由布局：窗口铺满整屏。画布高度恒为 1080，画布坐标
                 // （X 自左边、Y 自底边）→ 屏幕坐标因此是一一对应的，
@@ -684,6 +781,15 @@ namespace CKeyViewer
         private void Tick()
         {
             double now = Now();
+
+            WatchWorkArea();
+            AdofaiTick(now);
+
+            if (_adofaiDirty && now >= _adofaiSaveAt)
+            {
+                _adofaiDirty = false;
+                SaveAdofaiSettings();
+            }
 
             bool pressedChanged = false;
             bool animating = false;
@@ -767,6 +873,231 @@ namespace CKeyViewer
         private double _lastPaint;
         private const double IdlePaintInterval = 0.5;
 
+        // ---------------------------------------------------------------
+        // ADOFAI Overlayer（冰与火之舞）
+        // ---------------------------------------------------------------
+
+        private readonly Adofai.AdofaiOverlay _adofaiOverlay = new Adofai.AdofaiOverlay();
+        private Adofai.AdofaiWindow _adofaiWin;
+        private Adofai.AdofaiReader _adofai;
+        private double _adofaiRetryAt;
+        private double _adofaiRootsAt;
+
+        /// <summary>上一帧的元素文字签名 —— 内容没变就不重绘信息层。</summary>
+        private string _adofaiSig;
+
+        /// <summary>上一次看到的工作区，用来发现分辨率 / 任务栏变化（动态吸附）。</summary>
+        private Rect _lastWorkArea;
+
+        /// <summary>ADOFAI 信息层窗口（按需创建；功能关闭时隐藏，不占资源）。</summary>
+        private Adofai.AdofaiWindow AdofaiWin
+        {
+            get
+            {
+                if (_adofaiWin == null)
+                {
+                    _adofaiWin = new Adofai.AdofaiWindow(_adofaiOverlay);
+                    _adofaiWin.Show();
+                    _adofaiWin.Hide();
+                    _adofaiWin.ClickThrough = !LayoutMode;
+                }
+                return _adofaiWin;
+            }
+        }
+
+        /// <summary>ADOFAI 信息层的可见性 / 几何同步。每帧调用，只在需要时动窗口。</summary>
+        private void SyncAdofaiWindow()
+        {
+            bool want = _adofaiOverlay.Settings.Enabled &&
+                        _window.IsVisible &&
+                        (_adofaiOverlay.Visible ||
+                         (LayoutMode && _adofaiOverlay.Settings.ShowInLayoutMode));
+
+            if (!want)
+            {
+                if (_adofaiWin != null && _adofaiWin.IsVisible) _adofaiWin.Hide();
+                return;
+            }
+
+            var w = AdofaiWin;
+
+            if (!w.IsVisible)
+            {
+                w.ApplyBounds();
+                w.Topmost = true;
+                w.Show();
+                w.Raise();
+                _lastWorkArea = KvSnap.WorkArea;
+                _adofaiSig = null;
+                w.Invalidate();
+                return;
+            }
+
+            // 动态吸附：工作区（分辨率 / 任务栏 / 缩放）一变就重铺，
+            // 元素位置由 KvSnap 按新的工作区重新算，不需要用户做任何事。
+            var wa = KvSnap.WorkArea;
+            if (KvSnap.WorkAreaChanged(_lastWorkArea, wa))
+            {
+                _lastWorkArea = wa;
+                w.ApplyBounds();
+                _adofaiSig = null;
+                w.Invalidate();
+            }
+        }
+
+        /// <summary>按键覆盖层自己的动态吸附：工作区变了就按锚点重摆（不重算大小）。</summary>
+        private void WatchWorkArea()
+        {
+            var wa = KvSnap.WorkArea;
+            if (!KvSnap.WorkAreaChanged(_lastWorkArea, wa)) return;
+            _lastWorkArea = wa;
+
+            if (Store.Settings.Anchor != 0 && Store.Settings.AnchorDynamic &&
+                !KvGeometry.IsCustom(P.StyleEnum))
+            {
+                Diag.Log("work area changed -> re-snap");
+                Rebuild();
+            }
+        }
+
+        /// <summary>
+        /// 驱动 ADOFAI 读取并同步信息层窗口。
+        /// 未开启时不做任何跨进程操作，也不碰窗口。
+        /// </summary>
+        private void AdofaiTick(double now)
+        {
+            var st = _adofaiOverlay.Settings;
+
+            _adofaiOverlay.LayoutMode = LayoutMode;
+
+            if (!st.Enabled)
+            {
+                _adofaiOverlay.Visible = false;
+                SyncAdofaiWindow();
+                return;
+            }
+
+            if (_adofai == null)
+            {
+                _adofai = new Adofai.AdofaiReader();
+                _adofaiRetryAt = 0;
+                _adofaiRootsAt = 0;
+            }
+            _adofai.AllowElCombo = st.AllowElCombo;
+            _adofai.AllowAutoCombo = st.AllowAutoCombo;
+
+            if (!_adofai.IsConnected)
+            {
+                // 未连接：每 2 秒重试一次（游戏可能还没开）
+                if (now >= _adofaiRetryAt)
+                {
+                    _adofaiRetryAt = now + 2.0;
+                    if (!_adofai.Attach() || !_adofai.Resolve()) _adofaiOverlay.Visible = false;
+                    else _adofaiRootsAt = now + 1.0;
+                }
+            }
+            else
+            {
+                // 静态根约 1 秒刷新一次（换关卡后对象会被重建）
+                if (now >= _adofaiRootsAt)
+                {
+                    _adofaiRootsAt = now + 1.0;
+                    if (!_adofai.RefreshRoots())
+                    {
+                        _adofaiOverlay.Visible = false;
+                        _adofai.Dispose();
+                        _adofai = null;
+                    }
+                }
+
+                if (_adofai != null)
+                {
+                    bool ok = _adofai.Read(_adofaiOverlay.State);
+                    _adofaiOverlay.Visible = ok && _adofaiOverlay.State.InLevel;
+                }
+            }
+
+            SyncAdofaiWindow();
+
+            if (_adofaiWin == null || !_adofaiWin.IsVisible) return;
+
+            // 内容没变就不重绘 —— 信息层会一直挂着，白刷 125 次/秒没必要
+            string sig = _adofaiOverlay.TextSignature();
+            if (sig != _adofaiSig)
+            {
+                _adofaiSig = sig;
+                _adofaiWin.Invalidate();
+            }
+        }
+
+        /// <summary>ADOFAI 连接状态（供设置界面显示）。</summary>
+        public string AdofaiStatus
+        {
+            get
+            {
+                if (!_adofaiOverlay.Settings.Enabled) return "未启用";
+                if (_adofai == null || !_adofai.IsConnected) return _adofai?.LastError ?? "未连接";
+                return _adofaiOverlay.Visible ? "已连接（关卡中）" : "已连接（等待进入关卡）";
+            }
+        }
+
+        /// <summary>当前读到的一行摘要（便于确认数值是否真的在变）。</summary>
+        public string AdofaiSnapshot
+        {
+            get
+            {
+                if (!_adofaiOverlay.Settings.Enabled || !_adofaiOverlay.Visible) return "";
+                var s = _adofaiOverlay.State;
+                return string.Format(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    "Combo {0}   进度 {1}/{2}   ACC {3:F2}%   X-ACC {4:F2}%   BPM {5:F0}",
+                    s.Combo, s.CurrentTile, s.TotalTiles, s.Accuracy * 100f, s.XAccuracy * 100f, s.Bpm);
+            }
+        }
+
+        /// <summary>字段解析失败清单（游戏版本变了才会出现，用来定位问题）。</summary>
+        public string AdofaiMissingFields =>
+            _adofai == null || _adofai.MissingFields.Count == 0
+                ? ""
+                : string.Join("、", _adofai.MissingFields);
+
+        /// <summary>强制重连（换关卡 / 重启游戏后手动点一下）。</summary>
+        public void AdofaiReconnect()
+        {
+            try { _adofai?.Dispose(); } catch { }
+            _adofai = null;
+            _adofaiRetryAt = 0;
+            _adofaiRootsAt = 0;
+            _adofaiSig = null;
+        }
+
+        /// <summary>立刻重绘一次信息层（改配色 / 位置 / 字号时即时反馈）。</summary>
+        public void AdofaiRepaint()
+        {
+            _adofaiSig = null;
+            _adofaiWin?.Invalidate();
+            _window.Renderer?.Invalidate();
+        }
+
+        /// <summary>给设置面板用：把某个元素弹回自动排列 / 或脱离。</summary>
+        public void AdofaiSetAutoLayout(bool on)
+        {
+            if (on) _adofaiOverlay.ResetToAutoLayout();
+            else _adofaiOverlay.DetachFromAutoForEditor();
+            _adofaiSig = null;
+            _adofaiWin?.Invalidate();
+            SaveAdofaiSettings();
+        }
+
+        /// <summary>选中信息层里的某个元素（设置面板里点「选中它」时用）。</summary>
+        public void AdofaiSelect(string id)
+        {
+            _adofaiOverlay.Selected = id;
+            _adofaiSig = null;
+            _adofaiWin?.Invalidate();
+        }
+
+
         public long TotalCount => _totalCount;
 
         public int TotalKps
@@ -845,6 +1176,24 @@ namespace CKeyViewer
         private readonly bool[] _nudgeWas = new bool[4];
         private readonly double[] _nudgeNext = new double[4];
 
+        // 信息层（ADOFAI）在其自己的窗口上拖动时的状态
+        private Adofai.AdofaiElement _adofaiDragEl;
+        private bool _adofaiDragGroup;
+        private bool _adofaiDragged;
+        private double _adofaiDragX, _adofaiDragY;
+        private bool _adofaiLbtn;
+
+        // adofai.json 的防抖落盘
+        private bool _adofaiDirty;
+        private double _adofaiSaveAt;
+
+        /// <summary>请求把 ADOFAI 配置落盘（600ms 防抖，和档案一样）。</summary>
+        public void QueueSaveAdofai()
+        {
+            _adofaiDirty = true;
+            _adofaiSaveAt = Now() + 0.6;
+        }
+
         /// <summary>布局模式开关。</summary>
         public bool LayoutMode { get; private set; }
 
@@ -901,6 +1250,23 @@ namespace CKeyViewer
             r.ArrowNudgeHint = Store.Settings.ArrowNudge;
             r.Invalidate();
 
+            // ADOFAI 信息层也跟着进 / 出布局模式：没连游戏也画出来，才好摆位置
+            _adofaiOverlay.LayoutMode = on;
+            if (!on)
+            {
+                _adofaiOverlay.Selected = null;
+                _adofaiOverlay.Hovered = null;
+                EndAdofaiDrag();
+            }
+            if (_adofaiWin != null)
+            {
+                // 上一帧可能停在「压在元素上」的状态，退出时必须恢复穿透
+                _adofaiWin.ClickThrough = true;
+                _adofaiSig = null;
+                _adofaiWin.Invalidate();
+            }
+            SyncAdofaiWindow();
+
             Diag.Log("layout mode = " + on + " (" + (reason ?? "?") + ") selected=" + SelectedNodeId);
             LayoutStateChanged?.Invoke();
         }
@@ -911,6 +1277,15 @@ namespace CKeyViewer
         public void SelectNode(int id)
         {
             SelectedNodeId = id;
+
+            // 选了按键节点就取消信息层里选中的元素，方向键微调才不会两头跑
+            if (_adofaiOverlay.Selected != null)
+            {
+                _adofaiOverlay.Selected = null;
+                _adofaiSig = null;
+                _adofaiWin?.Invalidate();
+            }
+
             _window.Renderer.SelectedNode = P.NodeById(id);
             _window.Renderer.Invalidate();
             LayoutStateChanged?.Invoke();
@@ -1008,22 +1383,27 @@ namespace CKeyViewer
             }
             _escWasDown = esc;
 
-            HandleMouseDrag();
+            // 信息层压在上面时不让按键层同时响应
+            bool adofaiOver = HandleAdofaiDrag();
+            if (!adofaiOver && _adofaiDragEl == null && !_adofaiDragGroup) HandleMouseDrag();
 
             // 方向键微调默认关闭：方向键经常被游戏 / 浏览器占用，
             // 开着的话在别的窗口按方向键会把选中节点一路带偏。
             if (Store.Settings.ArrowNudge) HandleNudge();
 
-            if (_dragNode != null) return;   // 拖动中保持可交互
+            if (_dragNode != null || _adofaiDragEl != null || _adofaiDragGroup) return;   // 拖动中保持可交互
 
-            bool over = false;
-            if (TryCursorRef(out double rx, out double ry))
+            bool over = adofaiOver;
+            double rx = 0, ry = 0;
+            if (!over && TryCursorRef(out rx, out ry))
                 over = HitTestNode(rx, ry) != null;
 
             if (over && _window.ClickThrough)
             {
                 _window.ClickThrough = false;
-                Diag.Log(string.Format("hit node -> interactive at ref=({0:0.#},{1:0.#})", rx, ry));
+                Diag.Log(adofaiOver
+                    ? "adofai layer -> interactive"
+                    : string.Format("hit node -> interactive at ref=({0:0.#},{1:0.#})", rx, ry));
             }
             else if (!over && !_window.ClickThrough)
             {
@@ -1083,15 +1463,18 @@ namespace CKeyViewer
             _lbtnWasDown = down;
         }
 
-        /// <summary>方向键微调选中节点（Shift 为 10 倍），带 350ms 延迟后 40ms 的连发。</summary>
+        /// <summary>
+        /// 方向键微调（Shift 为 10 倍），带 350ms 延迟后 40ms 的连发。
+        /// <para>
+        /// 优先作用在信息层里选中的那个元素上 —— 选中信息元素后方向键就不该再
+        /// 悄悄带动按键节点，反过来也一样。没选信息元素时才落到按键节点上。
+        /// </para>
+        /// </summary>
         private void HandleNudge()
         {
-            var n = SelectedNode;
-            if (n == null) return;
-
-            float step = Win32.IsKeyDown(Win32.VK_SHIFT) ? 10f : 1f;
+            double step = Win32.IsKeyDown(Win32.VK_SHIFT) ? 10 : 1;
             double now = Now();
-            bool moved = false;
+            double dx = 0, dy = 0;
 
             int[] vks = { Win32.VK_LEFT, Win32.VK_UP, Win32.VK_RIGHT, Win32.VK_DOWN };
 
@@ -1106,13 +1489,163 @@ namespace CKeyViewer
                 _nudgeWas[i] = down;
                 if (!fire) continue;
 
-                double dx = i == 0 ? -step : (i == 2 ? step : 0);
-                double dy = i == 1 ? -step : (i == 3 ? step : 0);
-                MoveNodeTo(n, n.X + dx, n.Y + dy);
-                moved = true;
+                if (i == 0) dx -= step;
+                else if (i == 2) dx += step;
+                else if (i == 1) dy -= step;
+                else dy += step;
             }
 
-            if (moved) QueueSave();
+            if (dx == 0 && dy == 0) return;
+
+            var ael = string.IsNullOrEmpty(_adofaiOverlay.Selected)
+                ? null
+                : _adofaiOverlay.Settings.Find(_adofaiOverlay.Selected);
+
+            if (ael != null)
+            {
+                var area = new Rect(0, 0, _adofaiWin?.ActualWidth ?? 0, _adofaiWin?.ActualHeight ?? 0);
+                if (_adofaiOverlay.MoveElement(ael, dx, dy, area))
+                {
+                    _adofaiSig = null;
+                    _adofaiWin?.Invalidate();
+                    QueueSaveAdofai();
+                }
+                return;
+            }
+
+            var n = SelectedNode;
+            if (n == null) return;
+            MoveNodeTo(n, n.X + dx, n.Y + dy);
+            QueueSave();
+        }
+
+        // ---------------------------------------------------------------
+        // 信息层（ADOFAI）在布局模式下的拖动
+        // ---------------------------------------------------------------
+
+        /// <summary>光标位置与信息层的本地绘制区域（0,0,W,H）。</summary>
+        private bool TryAdofaiPoint(out Point p, out Rect area)
+        {
+            p = new Point();
+            area = Rect.Empty;
+
+            var w = _adofaiWin;
+            if (w == null || !w.IsVisible) return false;
+            if (!w.TryLocalPoint(out p)) return false;
+
+            area = new Rect(0, 0, w.ActualWidth, w.ActualHeight);
+            return area.Width > 0 && area.Height > 0;
+        }
+
+        private void EndAdofaiDrag()
+        {
+            bool moved = _adofaiDragged;
+            _adofaiDragEl = null;
+            _adofaiDragGroup = false;
+            _adofaiDragged = false;
+
+            if (_adofaiWin != null) _adofaiWin.ClickThrough = true;
+
+            if (moved)
+            {
+                _adofaiDirty = false;
+                SaveAdofaiSettings();
+                Diag.Log("adofai layout saved");
+                LayoutStateChanged?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// 布局模式下在信息层上拖动。返回 true 表示这一帧鼠标归信息层管
+        /// （此时按键覆盖层必须保持穿透，否则一次拖动会同时带动两个东西）。
+        /// </summary>
+        private bool HandleAdofaiDrag()
+        {
+            var ov = _adofaiOverlay;
+            var win = _adofaiWin;
+
+            if (!LayoutMode || win == null || !win.IsVisible || !ov.Settings.Enabled) return false;
+
+            if (!TryAdofaiPoint(out Point p, out Rect area))
+            {
+                _adofaiLbtn = false;
+                return false;
+            }
+
+            bool down = Win32.IsKeyDown(Win32.VK_LBUTTON);
+
+            if (!area.Contains(p))
+            {
+                if (!down && _adofaiLbtn && (_adofaiDragEl != null || _adofaiDragGroup)) EndAdofaiDrag();
+                _adofaiLbtn = down;
+                return false;
+            }
+
+            bool shift = Win32.IsKeyDown(Win32.VK_SHIFT);
+            var hitEl = ov.HitTestElement(p);
+
+            if (down && !_adofaiLbtn)
+            {
+                if (hitEl != null && !shift)
+                {
+                    // 先把自动排列的当前结果写进各元素，再拖这一个 ——
+                    // 「把判定条拖走」时其余元素留在原地。
+                    if (ov.DetachAutoLayout()) Diag.Log("adofai: auto layout -> free");
+                    _adofaiDragEl = hitEl;
+                    ov.Selected = hitEl.Id;
+                }
+                else if (ov.HasContent && (ov.HitTestGroup(p) || shift))
+                {
+                    _adofaiDragGroup = true;
+                }
+
+                _adofaiDragX = p.X;
+                _adofaiDragY = p.Y;
+                _adofaiDragged = false;
+            }
+            else if (down && (_adofaiDragEl != null || _adofaiDragGroup))
+            {
+                double dx = p.X - _adofaiDragX;
+                double dy = p.Y - _adofaiDragY;
+
+                if (dx != 0 || dy != 0)
+                {
+                    bool moved = _adofaiDragGroup
+                        ? (ov.Settings.AutoLayout ? ov.MoveGroup(dx, dy, area) : ov.MoveAll(dx, dy, area))
+                        : ov.MoveElement(_adofaiDragEl, dx, dy, area);
+
+                    _adofaiDragX = p.X;
+                    _adofaiDragY = p.Y;
+
+                    if (moved)
+                    {
+                        _adofaiDragged = true;
+                        _adofaiSig = null;
+                        win.Invalidate();
+                    }
+                }
+            }
+            else if (!down && _adofaiLbtn && (_adofaiDragEl != null || _adofaiDragGroup))
+            {
+                EndAdofaiDrag();
+            }
+
+            _adofaiLbtn = down;
+
+            // 悬停高亮：既是给用户的反馈，也顺手决定这一帧要不要吃鼠标
+            string hv = hitEl?.Id;
+            if (ov.Hovered != hv)
+            {
+                ov.Hovered = hv;
+                _adofaiSig = null;
+                win.Invalidate();
+            }
+
+            bool interactive = _adofaiDragEl != null || _adofaiDragGroup || hitEl != null ||
+                               (ov.HasContent && ov.HitTestGroup(p));
+
+            if (win.ClickThrough == interactive) win.ClickThrough = !interactive;
+            return interactive;
         }
 
         // ---------------------------------------------------------------
@@ -1130,12 +1663,15 @@ namespace CKeyViewer
             _window.Show();
             Win32.BringToTop(_window.Handle);
             _window.Renderer.Invalidate();
+            SyncAdofaiWindow();
+            _adofaiWin?.Raise();
         }
 
         public void Hide()
         {
             FlushStats();
             _window.Hide();
+            if (_adofaiWin != null && _adofaiWin.IsVisible) _adofaiWin.Hide();
         }
 
         public void ToggleVisible()
