@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Windows;
+using System.Windows.Controls;
 using CKeyViewer.Core;
 using CKeyViewer.Ui;
 
@@ -73,6 +74,9 @@ namespace CKeyViewer
 
             Out.AppendLine("---- tray menu skin ----");
             MenuSkin();
+
+            Out.AppendLine("---- combo (dropdown) templates ----");
+            ComboTemplates();
 
             Out.AppendLine("---- summary ----");
             Out.AppendLine(_fail == 0 ? string.Format("ALL PASS ({0} checks)", _pass)
@@ -304,6 +308,180 @@ namespace CKeyViewer
 
             Check("锚点名称表与取值域等长", KvSnap.Names.Length == KvSnap.Max - KvSnap.Min + 1);
             Check("锚点 0 是自由", KvSnap.NameOf(KvSnap.Min) == "自由");
+        }
+
+        // ---- 下拉菜单（ContextMenu）模板 ----
+
+        /// <summary>
+        /// 下拉菜单**离屏渲染**。不这么做的话，这一段只能靠「用户说它是张白卡片」来发现 ——
+        /// WPF 的 ContextMenu 模板一旦没给 / 给错，症状是整个下拉退回系统默认那套
+        /// 白底方角，和旁边的 iOS 面板完全不是一回事，而代码里看不出任何异常。
+        /// <para>
+        /// 真实点击弹窗在无头环境下截不到（ContextMenu 要拿鼠标捕获，
+        /// 合成事件拿不到就会被立刻关掉），所以改成把模板套到普通元素上
+        /// 用 <see cref="System.Windows.Media.Imaging.RenderTargetBitmap"/> 画出来，
+        /// 顺便存成 PNG 供人工核对。
+        /// </para>
+        /// </summary>
+        private static void ComboTemplates()
+        {
+            foreach (var dark in new[] { true, false })
+            {
+                Kit.UseTheme(dark);
+                string which = dark ? "深色" : "浅色";
+                var dict = Kit.Theme();
+
+                var cm = FindStyle(dict, typeof(System.Windows.Controls.ContextMenu));
+                var mi = FindStyle(dict, typeof(System.Windows.Controls.MenuItem));
+                Check("下拉菜单有 ContextMenu 样式（" + which + "）", cm != null);
+                Check("下拉菜单有 MenuItem 样式（" + which + "）", mi != null);
+                if (cm == null || mi == null) continue;
+
+                var cmTpl = TemplateOf(cm);
+                var miTpl = TemplateOf(mi);
+                Check("ContextMenu 给了自定义模板（" + which + "）", cmTpl != null);
+                Check("MenuItem 给了自定义模板（" + which + "）", miTpl != null);
+                if (cmTpl == null || miTpl == null) continue;
+
+                // 菜单项：量一个 260 宽的行，看模板能不能真渲染出内容
+                var probe = new System.Windows.Controls.MenuItem
+                {
+                    Header = "布局样式",
+                    IsCheckable = true,
+                    IsChecked = true,
+                    FontFamily = new System.Windows.Media.FontFamily("Microsoft YaHei UI, Segoe UI"),
+                    FontSize = 13,
+                    Padding = new Thickness(10, 7, 10, 7)
+                };
+                probe.Style = mi;
+                probe.Measure(new Size(260, double.PositiveInfinity));
+                probe.Arrange(new Rect(0, 0, 260, probe.DesiredSize.Height));
+                probe.UpdateLayout();
+
+                int rh = Math.Max(1, (int)Math.Ceiling(probe.DesiredSize.Height));
+                var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                    260, rh, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                bmp.Render(probe);
+                Check("菜单项能离屏渲染出内容（" + which + "）", NonBlack(bmp) > 20);
+                Out.AppendLine("       菜单项量到高 " + probe.DesiredSize.Height.ToString("0.0")
+                              + "，渲染 " + rh + "px");
+
+                // 对勾列用**结构**断言而不是找蓝色像素：离屏渲染出来的抗锯齿色值
+                // 不可靠，而且真正要保证的是「勾上时那个 Check 元素会出现」。
+                var check = miTpl.FindName("Check", probe) as FrameworkElement;
+                Check("模板里有对勾列元素 Check（" + which + "）", check != null);
+                Check("勾选时对勾列可见（" + which + "）",
+                      check != null && check.Visibility == Visibility.Visible);
+                // 反过来再验一次：IsChecked=false 时它必须收起来
+                probe.IsChecked = false;
+                probe.UpdateLayout();
+                Check("取消勾选后对勾列隐藏（" + which + "）",
+                      check != null && check.Visibility == Visibility.Collapsed);
+                probe.IsChecked = true;
+
+                if (dark) SavePng(bmp, "selftest_menuitem_" + which + ".png");
+
+                // 卡片底色：Style 本身没有 Background，得从Setter 里取 ——
+                // 这条断链的症状正是「深色主题下整张下拉是一片白」
+                var want = (System.Windows.Media.SolidColorBrush)
+                    new System.Windows.Media.BrushConverter().ConvertFromString(Kit.Palette.Card);
+                var got = SetterBrush(cm, Control.BackgroundProperty);
+                Check("下拉卡片底色跟调色板一致（" + which + "）",
+                      got is System.Windows.Media.SolidColorBrush gb
+                      && gb.Color.ToString().Equals(want.Color.ToString()));
+            }
+            Kit.UseTheme(true);
+        }
+
+        private static Style FindStyle(ResourceDictionary dict, Type target)
+        {
+            foreach (var k in dict.Keys)
+            {
+                if (dict[k] is Style s && s.TargetType == target) return s;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 从样式里取 ControlTemplate。
+        /// 走 <see cref="Setter"/> 而不是 <c>Style.Template</c>，并且注意
+        /// TemplateProperty 挂在 <see cref="Control"/> 上、不在 FrameworkElement 上。
+        /// </summary>
+        private static System.Windows.Controls.ControlTemplate TemplateOf(Style style)
+        {
+            if (style == null) return null;
+            foreach (var s in style.Setters)
+            {
+                if (s is Setter set &&
+                    set.Property == Control.TemplateProperty &&
+                    set.Value is System.Windows.Controls.ControlTemplate tpl) return tpl;
+            }
+            return null;
+        }
+
+        /// <summary>取样式里某个依赖属性的Setter 值（这里只关心画刷）。</summary>
+        private static System.Windows.Media.Brush SetterBrush(Style style, DependencyProperty prop)
+        {
+            if (style == null) return null;
+            foreach (var s in style.Setters)
+            {
+                if (s is Setter set && set.Property == prop) return set.Value as System.Windows.Media.Brush;
+            }
+            return null;
+        }
+
+        /// <summary>数一数有多少个「不是全透明也不是黑」的像素，用来判断有没有真画上东西。</summary>
+        private static int NonBlack(System.Windows.Media.Imaging.BitmapSource bmp)
+        {
+            var px = Grab(bmp, out int w, out int h);
+            int n = 0;
+            for (int i = 0; i < px.Length; i += 4)
+            {
+                // WPF 的 Pbgra32 是预乘的，rgb 都为 0（含 alpha=0）算空白
+                if (px[i] > 8 || px[i + 1] > 8 || px[i + 2] > 8) n++;
+            }
+            return n;
+        }
+
+        /// <summary>
+        /// 有没有「偏蓝的亮像素」—— 强调色 iOS 蓝 #0A84FF / #007AFF 一类。
+        /// 用来证明勾选列那个✓ 真的画出来了，而不是只有一排文字。
+        /// </summary>
+        private static bool HasAccentPixel(System.Windows.Media.Imaging.BitmapSource bmp)
+        {
+            var px = Grab(bmp, out int w, out int h);
+            for (int i = 0; i < px.Length; i += 4)
+            {
+                int b = px[i + 2], r = px[i], g = px[i + 1];
+                if (b > 150 && b - r > 60 && b - g > 25) return true;
+            }
+            return false;
+        }
+
+        private static byte[] Grab(System.Windows.Media.Imaging.BitmapSource bmp, out int w, out int h)
+        {
+            w = bmp.PixelWidth; h = bmp.PixelHeight;
+            var px = new byte[Math.Max(0, w * h * 4)];
+            if (px.Length > 0) bmp.CopyPixels(px, w * 4, 0);
+            return px;
+        }
+
+        private static void SavePng(System.Windows.Media.Imaging.BitmapSource bmp, string name)
+        {
+            try
+            {
+                var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+                string path = System.IO.Path.Combine(
+                    AppContext.BaseDirectory, "selftest", name);
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
+                using (var fs = System.IO.File.Create(path)) enc.Save(fs);
+                Out.AppendLine("     渲染图: " + path);
+            }
+            catch (Exception ex)
+            {
+                Out.AppendLine("     渲染图保存失败: " + ex.Message);
+            }
         }
 
         // ---- 信息层元素 ----

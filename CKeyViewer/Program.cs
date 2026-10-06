@@ -129,6 +129,30 @@ namespace CKeyViewer
                     t.Start();
                 }
 
+                // 截图 / 调试用：打开设置面板后**自动弹开第 n 个下拉菜单**。
+                // 这台机器上 SendInput / SetCursorPos 都是空操作，点不开任何菜单，
+                // 只能靠环境变量硬弹 —— 之前托盘菜单那个「纯白卡片」就是这么定位的。
+                // 值 = 下拉的序号（按创建顺序，0 是第一个）。Release 里整段被编译掉。
+                string autoCombo = Environment.GetEnvironmentVariable("CKV_OPEN_COMBO");
+                if (!string.IsNullOrEmpty(autoCombo))
+                {
+                    int ci;
+                    if (!int.TryParse(autoCombo, out ci)) ci = 0;
+                    int want = ci;
+                    var t3 = new System.Windows.Threading.DispatcherTimer
+                    {
+                        Interval = TimeSpan.FromSeconds(7)
+                    };
+                    t3.Tick += (s, e) =>
+                    {
+                        t3.Stop();
+                        bool ok = Ui.Kit.DebugOpenCombo(want);
+                        Core.Diag.Log("auto-open combo #" + want + " ok=" + ok
+                                      + " total=" + Ui.Kit.DebugComboCount);
+                    };
+                    t3.Start();
+                }
+
                 // 截图 / 调试用：直接进布局模式（覆盖层 + 信息层都画出来）。
                 // 不用发 Ctrl+Alt+L —— 用户自己那份实例会先抢到这个热键。
                 string autoLayout = Environment.GetEnvironmentVariable("CKV_LAYOUT");

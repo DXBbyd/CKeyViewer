@@ -558,29 +558,90 @@ namespace CKeyViewer.Ui
     </Setter>
   </Style>
 
-  <!-- 菜单（下拉用） -->
+  <!-- 下拉菜单（Kit.Combo / Kit.EditableCombo 弹的就是它）。
+       之前这里只有属性、没有 ControlTemplate —— WPF 默认模板自带系统菜单那套
+       白底 + 硬阴影 + 直角，跟旁边的 iOS 面板完全不是一回事（跟托盘菜单
+       「纯白卡片」同一个病根）。所以整套模板换掉。 -->
   <Style TargetType=""ContextMenu"">
     <Setter Property=""Background"" Value=""%%CARD%%""/>
     <Setter Property=""BorderBrush"" Value=""%%BORDER%%""/>
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""Padding"" Value=""4""/>
+    <Setter Property=""Padding"" Value=""6""/>
     <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
+    <Setter Property=""FontSize"" Value=""13""/>
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""ContextMenu"">
+          <!-- Popup 里必须自带一层带圆角的 Border：ContextMenu 的内容不会被
+               客户端圆角裁剪，所以圆角要画在内容下面这一层上。 -->
+          <Border Background=""%%CARD%%"" BorderBrush=""%%BORDER%%"" BorderThickness=""1""
+                  CornerRadius=""12"" Padding=""{TemplateBinding Padding}"">
+            <Border.Effect>
+              <DropShadowEffect BlurRadius=""18"" ShadowDepth=""4"" Opacity=""0.28"" Color=""Black""/>
+            </Border.Effect>
+            <ScrollViewer VerticalScrollBarVisibility=""Auto""
+                          HorizontalScrollBarVisibility=""Disabled""
+                          Focusable=""False"">
+              <StackPanel IsItemsHost=""True"" KeyboardNavigation.DirectionalNavigation=""Cycle""/>
+            </ScrollViewer>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
+  <!-- 菜单项：整行圆角淡底 + 左侧固定宽度的对勾列。
+       对勾用真正的 IsChecked 画，**别再往 Header 文本里拼 ✔ 和一串空格** ——
+       那样选中项与未选中项靠空格数对齐，字体一换行就散。
+       对勾本身是Path 几何而不是字符：U+2713 在 Segoe UI Symbol 里并不一定存在，
+       缺字时会退化成一个蓝色楔形（离屏渲染抓出来就是那个）。
+       （注释里也不能出现成对的英文双引号：整个模板是一个 C# @ 字符串常量。） -->
   <Style TargetType=""MenuItem"">
     <Setter Property=""Foreground"" Value=""{StaticResource KvText}""/>
-    <Setter Property=""Padding"" Value=""11,7""/>
+    <Setter Property=""Padding"" Value=""10,7""/>
+    <Setter Property=""FontFamily"" Value=""Microsoft YaHei UI, Segoe UI""/>
+    <Setter Property=""FontSize"" Value=""13""/>
+    <Setter Property=""Cursor"" Value=""Hand""/>
     <Setter Property=""Template"">
       <Setter.Value>
         <ControlTemplate TargetType=""MenuItem"">
-          <Border x:Name=""B"" Background=""Transparent"" CornerRadius=""6"" Padding=""{TemplateBinding Padding}"">
-            <ContentPresenter ContentSource=""Header""/>
+          <Border x:Name=""B"" Background=""Transparent"" CornerRadius=""8"" Padding=""{TemplateBinding Padding}"">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width=""18""/>
+                <ColumnDefinition Width=""*""/>
+              </Grid.ColumnDefinitions>
+              <!-- 对勾列：勾上时在中间画一个强调色的 ✓ -->
+              <Path x:Name=""Check"" Grid.Column=""0"" Data=""M 0,3.5 L 2.6,6.2 L 7.5,0""
+                    Stroke=""%%ACCENT%%"" StrokeThickness=""1.9""
+                    StrokeStartLineCap=""Round"" StrokeEndLineCap=""Round"" StrokeLineJoin=""Round""
+                    Width=""8"" Height=""7"" Stretch=""None""
+                    HorizontalAlignment=""Center"" VerticalAlignment=""Center""
+                    Visibility=""Collapsed""/>
+              <ContentPresenter Grid.Column=""1"" ContentSource=""Header"" VerticalAlignment=""Center""/>
+            </Grid>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property=""IsHighlighted"" Value=""True"">
               <Setter TargetName=""B"" Property=""Background"" Value=""%%HOVER%%""/>
             </Trigger>
+            <Trigger Property=""IsChecked"" Value=""True"">
+              <Setter TargetName=""Check"" Property=""Visibility"" Value=""Visible""/>
+            </Trigger>
+            <Trigger Property=""IsEnabled"" Value=""False"">
+              <Setter Property=""Foreground"" Value=""%%SUB%%""/>
+            </Trigger>
           </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style TargetType=""Separator"">
+    <Setter Property=""Template"">
+      <Setter.Value>
+        <ControlTemplate TargetType=""Separator"">
+          <Border Margin=""10,5,10,5"" Height=""1"" Background=""%%SEP%%""/>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -603,8 +664,11 @@ namespace CKeyViewer.Ui
             <ContentPresenter Grid.Column=""0"" VerticalAlignment=""Center"" RecognizesAccessKey=""True"" Margin=""0,0,10,0""/>
             <Border x:Name=""Track"" Grid.Column=""1"" Width=""46"" Height=""28"" CornerRadius=""14""
                     Background=""%%SWOFF%%"" VerticalAlignment=""Center"">
+              <!-- 圆钮靠 animating Margin.Left 走位：Track 46 - Knob 24 - 左右留白 2*2 = 18 的行程。
+                   千万别改成 HorizontalAlignment=Right 或者只动右边距 ——
+                   左对齐时右边距完全不参与定位，开关看起来会「两边都在左边」。 -->
               <Ellipse x:Name=""Knob"" Width=""24"" Height=""24"" Fill=""White""
-                       HorizontalAlignment=""Left"" Margin=""2,0,0,0"">
+                       HorizontalAlignment=""Left"" Margin=""2,0,20,0"">
                 <Ellipse.Effect>
                   <DropShadowEffect BlurRadius=""4"" ShadowDepth=""1"" Opacity=""0.3"" Color=""Black""/>
                 </Ellipse.Effect>
@@ -618,7 +682,7 @@ namespace CKeyViewer.Ui
                 <BeginStoryboard>
                   <Storyboard>
                     <ThicknessAnimation Storyboard.TargetName=""Knob"" Storyboard.TargetProperty=""Margin""
-                                        To=""0,0,2,0"" Duration=""0:0:0.16"">
+                                        To=""20,0,2,0"" Duration=""0:0:0.16"">
                       <ThicknessAnimation.EasingFunction>
                         <CubicEase EasingMode=""EaseOut""/>
                       </ThicknessAnimation.EasingFunction>
@@ -630,7 +694,7 @@ namespace CKeyViewer.Ui
                 <BeginStoryboard>
                   <Storyboard>
                     <ThicknessAnimation Storyboard.TargetName=""Knob"" Storyboard.TargetProperty=""Margin""
-                                        To=""2,0,0,0"" Duration=""0:0:0.16"">
+                                        To=""2,0,20,0"" Duration=""0:0:0.16"">
                       <ThicknessAnimation.EasingFunction>
                         <CubicEase EasingMode=""EaseOut""/>
                       </ThicknessAnimation.EasingFunction>
@@ -930,24 +994,104 @@ namespace CKeyViewer.Ui
             }
             Refresh();
 
-            btn.Click += (s, e) =>
+            void OpenMenu()
             {
                 if (items == null || items.Count == 0) return;
 
-                var menu = new ContextMenu { MaxHeight = menuMaxHeight, PlacementTarget = btn, Placement = PlacementMode.Bottom };
+                var menu = BuildMenu(btn, menuMaxHeight);
                 int cur = get();
                 for (int i = 0; i < items.Count; i++)
                 {
                     int idx = i;
-                    var mi = new MenuItem { Header = (idx == cur ? "✔  " : "     ") + items[idx] };
+                    var mi = new MenuItem
+                    {
+                        Header = items[idx],
+                        // 用真正的 IsChecked，样式里那列对勾会自动亮起来。
+                        // 早先是在 Header 前面拼 ✔ 和一串空格来假对齐，
+                        // 字体一换行就散，而且和 MenuItem 的 Padding 叠在一起会歪。
+                        IsCheckable = true,
+                        IsChecked = idx == cur,
+                        CommandParameter = idx
+                    };
                     mi.Click += (s2, e2) => { set(idx); Refresh(); };
                     menu.Items.Add(mi);
                 }
                 menu.IsOpen = true;
+#if DEBUG
+                _lastDebugMenu = menu;
+#endif
+            }
+
+            btn.Click += (s, e) =>
+            {
+                OpenMenu();
                 e.Handled = true;
             };
 
+#if DEBUG
+            _debugCombos.Add(new WeakReference(btn));
+#endif
+
             return Row(label, btn, labelWidth);
+        }
+
+#if DEBUG
+        private static readonly List<WeakReference> _debugCombos = new();
+        private static ContextMenu _lastDebugMenu;
+
+        /// <summary>调试：目前一共造了多少个下拉（Combo + EditableCombo）。</summary>
+        public static int DebugComboCount => _debugCombos.Count;
+
+        /// <summary>
+        /// 调试：弹开第 <paramref name="index"/> 个下拉（按创建顺序，0 起）。
+        /// 走的是真实的 Button.Click 事件，不是另写一套弹窗逻辑 ——
+        /// 这样截出来的图就是用户真会看到的那一份。
+        /// <para>
+        /// 合成事件没有鼠标捕获，ContextMenu 会开一下就被焦点变化关掉，
+        /// 所以之后用一个 250ms 的定时器反复 IsOpen=true 顶住，
+        /// 保证截图那一刻它是张开的。
+        /// </para>
+        /// </summary>
+        public static bool DebugOpenCombo(int index)
+        {
+            int i = 0;
+            foreach (var wr in _debugCombos)
+            {
+                if (wr.Target is Button b && i++ == index)
+                {
+                    b.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+                    var keep = new System.Windows.Threading.DispatcherTimer
+                    { Interval = TimeSpan.FromMilliseconds(250) };
+                    int ticks = 0;
+                    keep.Tick += (s, e) =>
+                    {
+                        if (_lastDebugMenu != null) _lastDebugMenu.IsOpen = true;
+                        if (++ticks > 80) keep.Stop();      // 顶 20 秒够了
+                    };
+                    keep.Start();
+                    return true;
+                }
+            }
+            return false;
+        }
+#endif
+
+        /// <summary>
+        /// 下拉菜单本体。样式来自 <see cref="Theme"/> 里的 ContextMenu / MenuItem 模板，
+        /// 这里只负责把它挂到按钮下面并限高。
+        /// </summary>
+        private static ContextMenu BuildMenu(FrameworkElement anchor, double menuMaxHeight)
+        {
+            var menu = new ContextMenu
+            {
+                MaxHeight = menuMaxHeight,
+                MinWidth = Math.Max(anchor.ActualWidth, 120),
+                PlacementTarget = anchor,
+                Placement = PlacementMode.Bottom,
+                VerticalOffset = 4
+            };
+            return menu;
         }
 
         /// <summary>可编辑文本 + 下拉候选 —— 等价的「可输入 ComboBox」，但外观完全可控。</summary>
@@ -985,15 +1129,20 @@ namespace CKeyViewer.Ui
             drop.Click += (s, e) =>
             {
                 if (items == null || items.Count == 0) return;
-                var menu = new ContextMenu { MaxHeight = menuMaxHeight, PlacementTarget = drop, Placement = PlacementMode.Bottom };
+
+                var menu = BuildMenu(drop, menuMaxHeight);
                 foreach (var it in items)
                 {
                     string v = it;
-                    var mi = new MenuItem { Header = v };
+                    var mi = new MenuItem { Header = v, IsCheckable = true, IsChecked = v == box.Text };
                     mi.Click += (s2, e2) => { box.Text = v; set(v); };
                     menu.Items.Add(mi);
                 }
                 menu.IsOpen = true;
+#if DEBUG
+                _lastDebugMenu = menu;
+                _debugCombos.Add(new WeakReference(drop));
+#endif
             };
 
             return Row(label, HRow(box, drop), labelWidth);
