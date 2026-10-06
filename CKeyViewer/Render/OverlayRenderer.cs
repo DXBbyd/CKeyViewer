@@ -544,10 +544,47 @@ namespace CKeyViewer.Render
                     : TotalLabel + "   " + NumFormat.Format((long)TotalCount, CountFormatting);
             }
 
+            // 按可用宽度自动缩字号。
+            //
+            // 为什么必须缩：Key10 / Key12 这两个预设的统计条只有 **77 个单位宽**
+            // （KvGeometry 里 ExtraSlot(-1, 0, 225, 77, -1)），屏幕上约 60px；
+            // 而「总和 942,253」这种文本在默认字号 22.47 下要 ~90px。
+            // 更糟的是 Total 那条的右边界正好等于区块右边界（X=351 + W=77 = 428），
+            // 于是超出的部分**不是被框子裁掉而是被窗口裁掉** ——
+            // 症状就是「总数那串数字不见了 / 只剩一半」。
+            // Key14/16/20/24 的条是 212 宽，所以那几个预设看不出来。
+            fontSize = FitStatFont(text, typeface, fontSize, rect, ppd);
+
             DrawTextCentered(dc, text, typeface, fontSize, fg, rect, ppd,
                              Theme.EnableKeyTextOutline, Theme.KeyTextOutlineColor, Theme.KeyTextOutlineThickness,
                              Theme.EnableKeyTextShadow, Theme.KeyTextShadowColor,
                              Theme.KeyTextShadowOffsetX, Theme.KeyTextShadowOffsetY);
+        }
+
+        /// <summary>
+        /// 把 <paramref name="fontSize"/> 缩到刚好能把 <paramref name="text"/> 放进
+        /// <paramref name="rect"/> 的宽度里；本来就放得下就原样返回。
+        /// <para>
+        /// 下限 7 DIP —— 再小就真的看不清了。
+        /// </para>
+        /// </summary>
+        private double FitStatFont(string text, Typeface typeface, double fontSize, Rect rect, double ppd)
+        {
+            if (string.IsNullOrEmpty(text)) return fontSize;
+
+            // 左右各留 4 个单位当内边距，不然文字会贴着圆角边框
+            double avail = rect.Width - 8 * Scale;
+            if (avail <= 4 || fontSize <= 0) return fontSize;
+
+            var probe = new FormattedText(text, CultureInfo.InvariantCulture,
+                                          FlowDirection.LeftToRight, typeface, fontSize,
+                                          Brushes.Black, ppd);
+            double w = probe.WidthIncludingTrailingWhitespace;
+            if (w <= avail) return fontSize;
+
+            double scaled = fontSize * (avail / w);
+            const double MinDip = 7.0;
+            return Math.Max(scaled, MinDip * Scale);
         }
 
         // ---------------------------------------------------------------
