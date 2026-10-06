@@ -1,0 +1,117 @@
+using System;
+using System.Windows;
+
+namespace CKeyViewer
+{
+    internal static class Program
+    {
+        [STAThread]
+        private static void Main(string[] args)
+        {
+            // 无界面自检：验证按键捕获的扫描逻辑（能绑 Shift / 鼠标键），跑完就退
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "--selftest", StringComparison.OrdinalIgnoreCase))
+            {
+                Native.Win32.AttachParentConsole();
+                string outPath = args.Length > 1
+                    ? args[1]
+                    : System.IO.Path.Combine(AppContext.BaseDirectory, "ckv_selftest.txt");
+                Environment.ExitCode = SelfTest.Run(outPath);
+                return;
+            }
+
+            Core.Diag.Reset();
+            Core.Diag.Log("=== start ===");
+
+            // 必须管理员运行：非管理员时读不到管理员进程（例如管理员启动的游戏）的按键。
+            // 这里**主动检查 + 弹窗 + 结束进程**，而不是靠清单里的 requireAdministrator ——
+            // 清单方式只会弹系统 UAC，看不到我们的说明，被拒也就直接退了。
+            if (!Admin.EnsureElevated())
+            {
+                Core.Diag.Log("not elevated -> " + Admin.RequireMessage + " -> exit");
+                Environment.Exit(1);
+                return;
+            }
+
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+                Core.Diag.Log("AppDomain: " + e.ExceptionObject);
+
+            try
+            {
+                var app = new Application
+                {
+                    ShutdownMode = ShutdownMode.OnExplicitShutdown
+                };
+
+                app.DispatcherUnhandledException += (s, e) =>
+                {
+                    Core.Diag.Log("Dispatcher: " + e.Exception);
+                    e.Handled = true;
+                };
+
+                var store = Core.KvProfileStore.CreateDefault();
+                Core.Diag.Log("config root = " + store.Root);
+
+                var window = new OverlayWindow();
+                var host = new KvHost(window, store);
+
+                // 设置窗口按需创建，关闭时只隐藏不销毁
+                KvSettingsWindow settings = null;
+                Action openSettings = () =>
+                {
+                    try
+                    {
+                        if (settings == null)
+                        {
+                            settings = new KvSettingsWindow(host);
+                            settings.Closed += (s, e) => settings = null;
+                            settings.Show();
+                            Core.Diag.Log("settings window shown " + settings.ActualWidth + "x" + settings.ActualHeight
+                                          + " @ " + settings.Left + "," + settings.Top);
+                        }
+                        else
+                        {
+                            if (!settings.IsVisible) settings.Show();
+                            settings.Activate();
+                            settings.Focus();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Core.Diag.Log("open settings: " + ex);
+                    }
+                };
+
+                var hotkeys = new KvHotkeys(window);
+                hotkeys.Toggle += () => host.ToggleVisible();
+                hotkeys.Reset += () => host.ResetCounts();
+                hotkeys.Settings += () => openSettings();
+                hotkeys.NextProfile += () => host.SwitchNextProfile();
+                hotkeys.ToggleLayout += () => host.ToggleLayoutMode();
+
+                var tray = new KvTray(host, openSettings, () => app.Shutdown());
+
+                app.Exit += (s, e) =>
+                {
+                    try { hotkeys.Dispose(); } catch (Exception ex) { Core.Diag.Log("hotkeys: " + ex); }
+                    try { tray.Dispose(); } catch (Exception ex) { Core.Diag.Log("tray: " + ex); }
+                    try { host.Stop(); } catch (Exception ex) { Core.Diag.Log("stop: " + ex); }
+                };
+
+                // 必须先把窗口显示出来，HWND 才会真正创建 —— 全局热键要注册在它上面。
+                window.Show();
+                host.Start();
+                hotkeys.Attach();
+
+                Core.Diag.Log("config = " + store.ProfilePath(store.CurrentProfile));
+
+                app.Run();
+                Core.Diag.Log("app.Run returned");
+            }
+            catch (Exception ex)
+            {
+                Core.Diag.Log("FATAL: " + ex);
+            }
+        }
+    }
+}

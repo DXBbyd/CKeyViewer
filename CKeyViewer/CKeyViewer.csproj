@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>CKeyViewer</AssemblyName>
+    <RootNamespace>CKeyViewer</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <StartupObject>CKeyViewer.Program</StartupObject>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!-- 应用图标：源图 icon/icon.png，由 tools/makeicon.py 生成 9 档尺寸的多尺寸 ICO -->
+    <ApplicationIcon>assets\app.ico</ApplicationIcon>
+
+    <!-- 版本与文件属性 -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyTitle>CKeyViewer 按键可视化覆盖层</AssemblyTitle>
+    <Product>CKeyViewer</Product>
+    <Company>CKeyViewer</Company>
+    <Description>置顶显示按键按下状态、KPS 雨线与按键计数；配置格式与 JipperKeyViewer 双向兼容。</Description>
+    <Copyright>Copyright © 2026 DXBbyd</Copyright>
+    <NeutralLanguage>zh-Hans</NeutralLanguage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 托盘图标直接从程序集里读这一份，免得到运行时去找外部文件 -->
+    <EmbeddedResource Include="assets\app.ico" LogicalName="CKeyViewer.app.ico" />
+    <None Update="assets\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

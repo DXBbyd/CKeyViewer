@@ -1,0 +1,52 @@
+# ── 构建产物 ──────────────────────────────────────────────
+bin/
+obj/
+[Cc]KeyViewer/[Bb]in/
+[Cc]KeyViewer/[Oo]bj/
+*.pdb
+*.dll.config
+*.cache
+
+# ── 发布 / 分发产物（用 Release 页面分发，不入库）──────────
+dist/
+dist_new/
+release/
+setup/
+*.exe
+*.msi
+*.zip
+
+# ── 运行期配置：含个人按键计数、配色与热键，不入库 ─────────
+config/
+**/config/
+!**/config/.gitkeep
+
+# ── 逆向与参考素材：原版 DLL 与反编译产物，不入库 ──────────
+jipper/
+re/
+_archive_c_impl/
+
+# ── 开发辅助脚本的一次性产物 ──────────────────────────────
+tools/_*.png
+tools/_*.txt
+tools/_*.log
+tools/*.log
+tools/out.txt
+
+# ── 工作区私有数据 ───────────────────────────────────────
+.workbuddy/
+
+# ── IDE ──────────────────────────────────────────────────
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# ── 其它 ─────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+*.tmp
+*.before-migrate
+ckv_error.log
+ckv_selftest.txt
