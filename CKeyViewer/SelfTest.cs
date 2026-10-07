@@ -69,6 +69,9 @@ namespace CKeyViewer
             Out.AppendLine("---- snap anchors ----");
             SnapAnchors();
 
+            Out.AppendLine("---- game window pick ----");
+            GameWindowPick();
+
             Out.AppendLine("---- adofai element layout ----");
             AdofaiElementLayout();
 
@@ -80,6 +83,9 @@ namespace CKeyViewer
 
             Out.AppendLine("---- combo (dropdown) templates ----");
             ComboTemplates();
+
+            Out.AppendLine("---- streamer mode hides KPS / Total ----");
+            StreamerStats();
 
             Out.AppendLine("---- summary ----");
             Out.AppendLine(_fail == 0 ? string.Format("ALL PASS ({0} checks)", _pass)
@@ -277,6 +283,127 @@ namespace CKeyViewer
             var shifted = new Rect(-1920, 40, 1920, 1000);
             Check("工作区有偏移时跟着走",
                 KvSnap.Place(7, 0, 100, 50, shifted, out l, out t) && l == -1920 && t == 990);
+
+            // 「按键层生效的是哪个锚点」—— 设置面板那个九宫格必须按这个结果去读写，
+            // 否则开着「吸附到游戏窗口」时改九宫格完全没反应
+            //（用户报的症状：选了右下角，按键却停在「中下」）。
+            Check("贴游戏窗口时生效锚点 = KeyAnchor",
+                KvSnap.EffectiveKeyAnchor(true, 7, 9) == 9);
+            Check("不贴游戏窗口时生效锚点 = 工作区 Anchor",
+                KvSnap.EffectiveKeyAnchor(false, 7, 9) == 7);
+            Check("生效锚点也收敛脏值",
+                KvSnap.EffectiveKeyAnchor(true, 7, 99) == 9 &&
+                KvSnap.EffectiveKeyAnchor(false, -3, 9) == 0);
+        }
+
+        // ---- 游戏窗口的挑选（吸附到游戏窗口的地基）----
+
+        /// <summary>
+        /// 挑游戏窗口的纯函数 <see cref="Native.Win32.PickGameWindow"/>。
+        ///
+        /// 为什么值得单独钉：原来只按「标题包含 A Dance of Fire and Ice」认窗口，
+        /// 认不到就退回「类是 UnityWndClass」—— 而后者的候选里混着 1×1、1905×4
+        /// 这类「可见但没意义」的系统辅助窗口，也可能撞上最小化窗口的 -32000 假坐标。
+        /// 挑错了的后果不是报错，而是**静悄悄地不吸附**，完全没法诊断。
+        /// </summary>
+        private static void GameWindowPick()
+        {
+            const int Self = 999;
+
+            Native.Win32.WinInfo W(int pid, string cls, string title,
+                                   int x, int y, int w, int h, bool iconic = false)
+                => new Native.Win32.WinInfo
+                {
+                    Hwnd = (IntPtr)pid,
+                    Pid = pid,
+                    Class = cls,
+                    Title = title,
+                    Left = x,
+                    Top = y,
+                    Right = x + w,
+                    Bottom = y + h,
+                    Iconic = iconic,
+                };
+
+            const string Title = "A Dance of Fire and Ice";
+
+            // 正常窗口化的游戏：PID 命中 + UnityWndClass，旁边还有一堆干扰窗口
+            var wins = new List<Native.Win32.WinInfo>
+            {
+                W(Self, "HwndWrapper", "", 0, 0, 420, 410),            // 我们自己的覆盖层
+                W(200, "Shell_TrayWnd", "", 0, 1032, 1920, 48),        // 任务栏
+                W(300, "ThumbnailDeviceHelperWnd", "", 0, 0, 1, 1),    // 1×1 辅助窗口
+                W(100, "UnityWndClass", Title, 100, 100, 1280, 720),   // 游戏本体
+                W(100, "GDI+ Hook Window Class", "", 0, 0, 160, 28),
+            };
+            Check("按 PID + UnityWndClass 认出游戏窗口",
+                Native.Win32.PickGameWindow(wins, "", new[] { 100 }, Self, out var hit, out var min, out var why)
+                && hit.Pid == 100 && hit.Width == 1280 && !min);
+
+            // Unity Mod Manager 会改写窗口标题 —— 按 PID 认就不受影响
+            wins = new List<Native.Win32.WinInfo>
+            {
+                W(Self, "HwndWrapper", "", 0, 0, 420, 410),
+                W(100, "SomeOtherClass", Title + " (7 mods)", 50, 60, 1600, 900),
+            };
+            Check("标题被 UMM 改写也认得出（按 PID）",
+                Native.Win32.PickGameWindow(wins, Title, new[] { 100 }, Self, out hit, out min, out why)
+                && hit.Pid == 100);
+
+            // 过小的 UnityWndClass 窗口不能当游戏窗口 —— 这就是原来那个兜底的坑
+            wins = new List<Native.Win32.WinInfo>
+            {
+                W(300, "UnityWndClass", "", 0, 0, 16, 16),
+                W(301, "UnityWndClass", "", 0, 0, 1905, 4),
+            };
+            Check("过小的 UnityWndClass 窗口不算命中",
+                !Native.Win32.PickGameWindow(wins, Title, Array.Empty<int>(), Self, out hit, out min, out why));
+
+            // 别的 Unity 游戏（用户装了 Hollow Knight / Rhythm Doctor 之类）不能被当成 ADOFAI
+            wins = new List<Native.Win32.WinInfo>
+            {
+                W(400, "UnityWndClass", "Hollow Knight", 0, 0, 1920, 1080),
+            };
+            Check("别的 Unity 游戏不会被误认",
+                !Native.Win32.PickGameWindow(wins, Title, Array.Empty<int>(), Self, out hit, out min, out why));
+
+            // 游戏最小化：矩形是 -32000 的假坐标，必须不命中并说清原因
+            wins = new List<Native.Win32.WinInfo>
+            {
+                W(100, "UnityWndClass", Title, -32000, -32000, 160, 28, iconic: true),
+            };
+            Check("最小化的游戏窗口不算命中，原因写「已最小化」",
+                !Native.Win32.PickGameWindow(wins, Title, new[] { 100 }, Self, out hit, out min, out why)
+                && min && why != null && why.Contains("最小化"));
+
+            // 既没有进程、也没有标题命中：要说清是「游戏没开」
+            wins = new List<Native.Win32.WinInfo> { W(Self, "HwndWrapper", "", 0, 0, 420, 410) };
+            Check("既没进程也没标题 → 原因「没找到 ADOFAI 进程」",
+                !Native.Win32.PickGameWindow(wins, Title, Array.Empty<int>(), Self, out hit, out min, out why)
+                && why != null && why.Contains("进程"));
+
+            // 有进程、但窗口还没建出来（游戏刚启动 / 刚全屏重建窗口）
+            Check("有进程但没窗口 → 原因提示「还在启动」",
+                !Native.Win32.PickGameWindow(wins, Title, new[] { 100 }, Self, out hit, out min, out why)
+                && why != null && why.Contains("启动"));
+
+            // 自己进程的窗口再大再像也绝不能当游戏窗口
+            wins = new List<Native.Win32.WinInfo>
+            {
+                W(Self, "UnityWndClass", Title, 0, 0, 1920, 1080),
+            };
+            Check("自己进程的窗口再像也不认",
+                !Native.Win32.PickGameWindow(wins, Title, new[] { Self }, Self, out hit, out min, out why));
+
+            // 同级多个候选：取面积最大的那个（残留的小窗口不能赢）
+            wins = new List<Native.Win32.WinInfo>
+            {
+                W(100, "UnityWndClass", "", 0, 0, 320, 240),
+                W(100, "UnityWndClass", "", 0, 0, 1920, 1080),
+            };
+            Check("同级候选取面积最大的",
+                Native.Win32.PickGameWindow(wins, "", new[] { 100 }, Self, out hit, out min, out why)
+                && hit.Width == 1920);
         }
 
         // ---- 托盘菜单皮肤 ----
@@ -394,6 +521,105 @@ namespace CKeyViewer
                       && gb.Color.ToString().Equals(want.Color.ToString()));
             }
             Kit.UseTheme(true);
+        }
+
+        /// <summary>
+        /// 流媒体模式必须把 KPS / Total **整条**藏掉，而不是只藏文字。
+        ///
+        /// 原版是 <c>SetStatsVisible(false)</c> → <c>SetKeyObjectActive(Kps / Total, false)</c>，
+        /// 关的是整个 GameObject —— 底框与描边一起消失。如果只在画文字时 return，
+        /// 统计条的位置会留下**两条空心紫框**，看起来就像渲染坏了。
+        /// 用户正是这么报上来的（截图里 A S D F 下面那两条空框）。
+        /// 这里离屏渲染两张图做对照：统计条矩形内要么有内容，要么一个像素都没有。
+        /// </summary>
+        private static void StreamerStats()
+        {
+            int shown = StatBarPixels(false);
+            int hidden = StatBarPixels(true);
+
+            Check("关闭流媒体模式时 KPS/Total 条画得出来", shown > 200);
+            Check("开启流媒体模式时 KPS/Total 条一个像素都不画（不留空心框）", hidden == 0);
+            Out.AppendLine("       统计条区域像素：关=" + shown + "，开=" + hidden);
+        }
+
+        /// <summary>Key16 布局离屏渲染一次，数「KPS / Total 条矩形内」的非透明像素。</summary>
+        private static int StatBarPixels(bool streamer)
+        {
+            var p = new KvProfile
+            {
+                KeyViewerStyle = (int)KeyviewerStyle.Key16,
+                StreamerMode = streamer
+            };
+            // 改成不透明白色：「有没有画」这件事就不受配色 / 透明度影响
+            p.KpsBackground = new KvColor(1, 1, 1, 1);
+            p.KpsOutline = new KvColor(1, 1, 1, 1);
+            p.TotalBackground = new KvColor(1, 1, 1, 1);
+            p.TotalOutline = new KvColor(1, 1, 1, 1);
+
+            var slots = KvGeometry.BuildSlots(KeyviewerStyle.Key16, p.StandardKeyWidth, p.DownLocation);
+            var m = KvGeometry.Measure(slots);
+
+            double topExtent = 0;
+            foreach (var s in slots) if (s.Top > topExtent) topExtent = s.Top;
+
+            const double scale = 1.0;
+            int W = Math.Max(1, (int)Math.Ceiling(m.Width * scale));
+            int H = Math.Max(1, (int)Math.Ceiling(topExtent * scale));
+
+            var r = new Render.OverlayRenderer();
+            r.Slots = slots;
+            r.Styles = null;                    // 统计条回落到 Theme（与预设布局一致）
+            r.Theme = Render.KvTheme.FromProfile(p);
+            r.IsCustomLayout = false;
+            r.Scale = scale;
+            r.OriginX = m.Left;
+            r.TopExtent = topExtent;
+            r.BlockWidth = m.Width;
+            r.BlockHeight = topExtent;
+            r.KeyFontSize = p.KeyFontSize;
+            r.CountFontSize = Math.Max(10, p.KeyFontSize * 0.62);
+            r.FontRef = "Segoe UI";
+            r.Bold = true;
+            r.Italic = false;
+            r.CountFormatting = p.EnableCountFormatting;
+            r.HideMainKeyCount = p.HideMainKeyCount;
+            r.KpsLabel = "KPS";
+            r.TotalLabel = "Total";
+            r.HideKpsTotalLabel = p.HideKpsTotalLabel;
+            r.StreamerMode = streamer;
+            r.RainEnabled = false;
+            r.TotalCount = 123456;
+            r.TotalKps = 42;
+
+            r.Width = W; r.Height = H;
+            r.Measure(new Size(W, H));
+            r.Arrange(new Rect(0, 0, W, H));
+            r.InvalidateVisual();
+
+            var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                W, H, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            bmp.Render(r);
+            if (!streamer) SavePng(bmp, "selftest_stats_streamer_off.png");
+
+            var px = Grab(bmp, out int bw, out int bh);
+            int n = 0;
+            foreach (var s in slots)
+            {
+                if (!s.IsStat) continue;
+                int x0 = (int)Math.Floor((s.X - m.Left) * scale);
+                int y0 = (int)Math.Floor((topExtent - s.Top) * scale);
+                int x1 = (int)Math.Ceiling((s.X + s.W - m.Left) * scale);
+                int y1 = (int)Math.Ceiling((topExtent - s.Bottom) * scale);
+                for (int y = Math.Max(0, y0); y < Math.Min(bh, y1); y++)
+                {
+                    for (int x = Math.Max(0, x0); x < Math.Min(bw, x1); x++)
+                    {
+                        int i = (y * bw + x) * 4;
+                        if (i + 3 < px.Length && (px[i] > 8 || px[i + 1] > 8 || px[i + 2] > 8)) n++;
+                    }
+                }
+            }
+            return n;
         }
 
         private static Style FindStyle(ResourceDictionary dict, Type target)

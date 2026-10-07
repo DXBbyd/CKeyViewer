@@ -119,43 +119,139 @@ public sealed class AdofaiReader : IDisposable
     public bool Attach()
     {
         Detach();
-        Process p = null;
-        foreach (Process cand in Process.GetProcessesByName(ProcName)) { p = cand; break; }
-        if (p == null) { LastError = "未找到 ADOFAI 进程"; return false; }
-        _pid = p.Id;
 
-        _hProc = OpenProcess(PROCESS_ALL, false, _pid);
-        if (_hProc == IntPtr.Zero)
-        { LastError = $"OpenProcess 失败 ({Marshal.GetLastWin32Error()})，请以管理员运行"; return false; }
+        int[] pids = ProcessIds();
+        if (pids.Length == 0) { LastError = "未找到 ADOFAI 进程"; return false; }
 
+        // 逐个试。**不能只取第一个** —— 实测同一时刻会出现两个同名进程
+        // （一个 32KB 的残留启动器 + 一个 980MB 的真游戏），
+        // 原来 foreach { p = cand; break; } 只认第一个，撞上残留进程就永远连不上，
+        // 而且每 2 秒重试还是同一个，表现为「一直连接失败」。
+        var tried = new List<string>(pids.Length);
+
+        foreach (int pid in pids)
+        {
+            // 先排掉「已经退出、但句柄没释放」的残留进程。
+            // 实测：游戏关掉之后仍然能查到名字一模一样的 32KB 进程（状态 Unknown、
+            // 用户 N/A），对它 OpenProcess 会得到 err=5 —— 看起来像权限问题，
+            // 其实这个进程早就没了。不排掉的话每次重试都会先撞上它，
+            // 报错还会误导成「请以管理员运行」。
+            bool exited;
+            try { using (Process pr = Process.GetProcessById(pid)) exited = pr.HasExited; }
+            catch { exited = true; }
+            if (exited) { tried.Add(pid + " 已退出（残留进程）"); continue; }
+
+            IntPtr h = OpenProcess(PROCESS_ALL, false, pid);
+            if (h == IntPtr.Zero)
+            {
+                int err = Marshal.GetLastWin32Error();
+                tried.Add(pid + " OpenProcess 失败(" + err + ")" +
+                          (err == 5 ? " 访问被拒绝，请以管理员运行" : ""));
+                continue;
+            }
+
+            // 「有没有 mono 运行时」是区分真游戏进程和残留壳的可靠特征
+            string monoPath = FindMonoModule(h, out ulong monoBase);
+            if (monoPath == null)
+            {
+                CloseHandle(h);
+                tried.Add(pid + " 无 mono 运行时");
+                continue;
+            }
+
+            var rva = PeExportRva(monoPath);
+            if (rva == null || rva.Count == 0)
+            {
+                CloseHandle(h);
+                tried.Add(pid + " 解析 mono 导出表失败");
+                continue;
+            }
+
+            string[] must = { "mono_get_root_domain", "mono_image_loaded", "mono_class_from_name",
+                              "mono_class_get_field_from_name", "mono_field_get_offset",
+                              "mono_class_vtable", "mono_field_static_get_value", "mono_thread_attach" };
+            string missing = null;
+            foreach (string m in must)
+                if (!rva.ContainsKey(m)) { missing = m; break; }
+            if (missing != null)
+            {
+                CloseHandle(h);
+                tried.Add(pid + " mono 缺导出 " + missing);
+                continue;
+            }
+
+            _hProc = h;
+            _pid = pid;
+            _monoBase = monoBase;
+            _fn = rva.ToDictionary(kv => kv.Key, kv => monoBase + kv.Value);
+            LastError = null;
+            Core.Diag.Log("adofai attach ok pid=" + pid + " mono=" + monoPath);
+            return true;
+        }
+
+        LastError = "连不上 ADOFAI（" + string.Join("；", tried) + "）";
+        Core.Diag.Log("adofai attach failed: " + LastError);
+        return false;
+    }
+
+    /// <summary>当前所有 ADOFAI 进程 ID（可能多个：残留启动器 / 真游戏）。</summary>
+    public static int[] ProcessIds()
+    {
+        try
+        {
+            Process[] ps = Process.GetProcessesByName(ProcName);
+            var ids = new int[ps.Length];
+            for (int i = 0; i < ps.Length; i++)
+            {
+                ids[i] = ps[i].Id;
+                ps[i].Dispose();
+            }
+            return ids;
+        }
+        catch { return Array.Empty<int>(); }
+    }
+
+    /// <summary>
+    /// 只保留**还活着**的 ADOFAI 进程。游戏关掉后经常留下同名的僵尸进程
+    /// （状态 Unknown / 用户 N/A），按窗口吸附时会误报成「有进程但没窗口」。
+    /// </summary>
+    public static int[] LiveProcessIds()
+    {
+        int[] all = ProcessIds();
+        var live = new List<int>(all.Length);
+        foreach (int pid in all)
+        {
+            try
+            {
+                using (Process pr = Process.GetProcessById(pid))
+                    if (!pr.HasExited) live.Add(pid);
+            }
+            catch { /* 已经不存在了 */ }
+        }
+        return live.ToArray();
+    }
+
+    /// <summary>在进程模块里找 mono 运行时，返回它的磁盘路径并给出基址。</summary>
+    private static string FindMonoModule(IntPtr h, out ulong monoBase)
+    {
+        monoBase = 0;
         var mods = new IntPtr[1024];
-        if (!EnumProcessModulesEx(_hProc, mods, (uint)(IntPtr.Size * mods.Length), out uint need, LIST_MODULES_ALL))
-        { LastError = $"EnumProcessModulesEx 失败 ({Marshal.GetLastWin32Error()})"; return false; }
+        if (!EnumProcessModulesEx(h, mods, (uint)(IntPtr.Size * mods.Length), out uint need, LIST_MODULES_ALL))
+            return null;
 
         var sb = new StringBuilder(1024);
-        string monoPath = null;
         for (int i = 0; i < (int)(need / (uint)IntPtr.Size); i++)
         {
             sb.Clear();
-            if (GetModuleFileNameEx(_hProc, mods[i], sb, (uint)sb.Capacity) == 0) continue;
+            if (GetModuleFileNameEx(h, mods[i], sb, (uint)sb.Capacity) == 0) continue;
             string path = sb.ToString();
             if (path.EndsWith(MonoDllName, StringComparison.OrdinalIgnoreCase))
-            { _monoBase = (ulong)(long)mods[i]; monoPath = path; break; }
+            {
+                monoBase = (ulong)(long)mods[i];
+                return path;
+            }
         }
-        if (monoPath == null) { LastError = "进程里没有 mono 运行时（游戏可能还在启动）"; return false; }
-
-        var rva = PeExportRva(monoPath);
-        if (rva == null || rva.Count == 0) { LastError = "解析 mono 导出表失败"; return false; }
-        _fn = rva.ToDictionary(kv => kv.Key, kv => _monoBase + kv.Value);
-
-        string[] must = { "mono_get_root_domain", "mono_image_loaded", "mono_class_from_name",
-                          "mono_class_get_field_from_name", "mono_field_get_offset",
-                          "mono_class_vtable", "mono_field_static_get_value", "mono_thread_attach" };
-        foreach (string m in must)
-            if (!_fn.ContainsKey(m)) { LastError = "mono 缺少导出 " + m; return false; }
-
-        LastError = null;
-        return true;
+        return null;
     }
 
     public void Detach()
@@ -163,6 +259,7 @@ public sealed class AdofaiReader : IDisposable
         foreach (IntPtr a in _allocs) { try { if (_hProc != IntPtr.Zero) VirtualFreeEx(_hProc, a, IntPtr.Zero, MEM_RELEASE); } catch { } }
         _allocs.Clear();
         if (_hProc != IntPtr.Zero) { CloseHandle(_hProc); _hProc = IntPtr.Zero; }
+        _pid = 0;
         _layoutOk = false;
         _lastHitCount = 0;
     }

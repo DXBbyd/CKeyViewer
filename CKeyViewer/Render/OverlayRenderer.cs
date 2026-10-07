@@ -341,6 +341,15 @@ namespace CKeyViewer.Render
 
         private void DrawKey(DrawingContext dc, KeySlot slot, Typeface typeface, double ppd)
         {
+            // 流媒体模式：**整条** KPS / Total 都不画。
+            //
+            // 原版是 SetStatsVisible(false) → 对 Kps / Total 这两个 Key 调
+            // SetKeyObjectActive(key, false)，也就是整个 GameObject 关掉，背景与描边
+            // 一起消失。只在 DrawStatText 里 return 的话，键帽底和描边照旧画出来，
+            // 屏幕上就会留下**两条空心的紫色横条** —— 看起来像渲染坏掉了，
+            // 而不是像「被有意隐藏」。这里跟原版对齐，在画任何东西之前就退出。
+            if (StreamerMode && slot.IsStat) return;
+
             KeyRuntime key = null;
             if (slot.Index >= 0 && Keys != null) Keys.TryGetValue(slot.Index, out key);
 
@@ -528,6 +537,7 @@ namespace CKeyViewer.Render
         private void DrawStatText(DrawingContext dc, KeySlot slot, Rect rect, Typeface typeface,
                                   double ppd, KvColor fg)
         {
+            // 双保险：正常情况下 DrawKey 已经整条跳过了（见那里的注释）。
             if (StreamerMode) return;
 
             double fontSize = KeyFontSize * Scale;

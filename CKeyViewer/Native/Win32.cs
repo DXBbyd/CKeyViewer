@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -115,66 +116,181 @@ namespace CKeyViewer.Native
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
 
-        /// <summary>
-        /// 找 ADOFAI 游戏窗口：标题包含 <paramref name="titlePart"/>（不区分大小写）的可见顶层窗口；
-        /// 找不到时退回「Unity 游戏窗口」类（<c>UnityWndClass</c>，与语言无关）。
-        /// 命中返回物理像素矩形。找不到返回 false。
-        /// </summary>
-        public static bool FindGameWindow(string titlePart, out int left, out int top, out int right, out int bottom)
+        /// <summary>一个可见顶层窗口的快照（吸附判定 + 诊断共用）。</summary>
+        public struct WinInfo
         {
-            left = top = right = bottom = 0;
-            if (string.IsNullOrEmpty(titlePart)) titlePart = "A Dance of Fire and Ice";
-            string needle = titlePart.ToLowerInvariant();
+            public IntPtr Hwnd;
+            public int Pid;
+            public string Class;
+            public string Title;
+            public int Left, Top, Right, Bottom;
+            /// <summary>最小化（图标化）。这种窗口的矩形是 -32000 之类的假坐标，不能拿来吸附。</summary>
+            public bool Iconic;
 
-            IntPtr found = IntPtr.Zero;
-            RECT r = default;
+            public int Width => Right - Left;
+            public int Height => Bottom - Top;
+            public int Area => Math.Max(0, Width) * Math.Max(0, Height);
+        }
 
+        /// <summary>游戏窗口可用的最小面积（物理像素）。用来滤掉 1×1 / 0×0 / 1905×4 这类
+        /// 「可见但没意义」的系统辅助窗口 —— 它们曾经让 UnityWndClass 兜底匹配到错误的窗口。</summary>
+        public const int MinGameWindowArea = 200 * 200;
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+        /// <summary>枚举全部可见顶层窗口。一次 EnumWindows，不区分归属进程。</summary>
+        public static List<WinInfo> ListVisibleTopLevelWindows()
+        {
+            var list = new List<WinInfo>(48);
             EnumWindows((hwnd, lparam) =>
             {
                 if (!IsWindowVisibleNative(hwnd)) return true;
+                if (!GetWindowRect(hwnd, out RECT rr)) return true;
+
+                var cls = new System.Text.StringBuilder(256);
+                GetClassName(hwnd, cls, cls.Capacity);
+
+                string title = "";
                 int len = GetWindowTextLength(hwnd);
                 if (len > 0)
                 {
                     var sb = new System.Text.StringBuilder(len + 1);
                     GetWindowText(hwnd, sb, len + 1);
-                    string title = sb.ToString();
-                    if (title.Length > 0 && title.ToLowerInvariant().Contains(needle))
-                    {
-                        if (GetWindowRect(hwnd, out RECT rr))
-                        {
-                            found = hwnd; r = rr;
-                            return false;   // 标题命中即停
-                        }
-                    }
+                    title = sb.ToString();
                 }
+
+                GetWindowThreadProcessId(hwnd, out uint pid);
+
+                list.Add(new WinInfo
+                {
+                    Hwnd = hwnd,
+                    Pid = (int)pid,
+                    Class = cls.ToString(),
+                    Title = title,
+                    Left = rr.Left,
+                    Top = rr.Top,
+                    Right = rr.Right,
+                    Bottom = rr.Bottom,
+                    Iconic = IsIconic(hwnd),
+                });
                 return true;
             }, IntPtr.Zero);
+            return list;
+        }
 
-            // 没按标题找到，退回 Unity 窗口类
-            if (found == IntPtr.Zero)
+        /// <summary>
+        /// 从窗口快照里挑出游戏窗口（**纯函数**，便于自测）。
+        /// <para>
+        /// 挑选顺序（先满足的优先，同级取面积最大者）：
+        /// <list type="number">
+        /// <item>归属 ADOFAI 进程 且 类是 UnityWndClass</item>
+        /// <item>归属 ADOFAI 进程（其余窗口类）</item>
+        /// <item>标题命中</item>
+        /// </list>
+        /// 「按 PID 认」比「按标题认」可靠得多：Unity Mod Manager 会改写窗口标题，
+        /// 汉化 / 新版也可能换标题，但进程名一直是 <c>A Dance of Fire and Ice</c>；
+        /// 而且切全屏时 Unity 可能换一个窗口，PID 不变。
+        /// </para>
+        /// <para>
+        /// 这里**故意不再保留**「只按 <c>UnityWndClass</c> 兜底」那条路：
+        /// 用户机器上同时装着别的 Unity 游戏（Hollow Knight、Rhythm Doctor…），
+        /// 那样会把覆盖层吸到无关的游戏窗口上 —— 而 ADOFAI 没开时本来就该退回工作区吸附。
+        /// 换过 exe 名又换过窗口标题的版本，让用户在「游戏窗口匹配（标题包含）」里自己填。
+        /// </para>
+        /// 最小化的窗口不算命中（<paramref name="minimized"/> 会置位），
+        /// 让调用方退回普通吸附，而不是把覆盖层吸到 -32000 的假坐标上。
+        /// </summary>
+        public static bool PickGameWindow(IList<WinInfo> wins, string titlePart, IList<int> pids,
+                                          int selfPid, out WinInfo win, out bool minimized, out string reason)
+        {
+            win = default;
+            minimized = false;
+            reason = null;
+
+            string needle = (string.IsNullOrEmpty(titlePart) ? "A Dance of Fire and Ice"
+                                                             : titlePart).ToLowerInvariant();
+            var pidSet = new HashSet<int>();
+            if (pids != null) foreach (int p in pids) pidSet.Add(p);
+
+            // 自己进程的窗口永远不是游戏窗口（覆盖层的标题是空的，但别留这个隐患）
+            bool Usable(WinInfo w) => !w.Iconic && w.Area >= MinGameWindowArea && w.Pid != selfPid;
+            bool OwnedByGame(WinInfo w) => pidSet.Count > 0 && pidSet.Contains(w.Pid);
+
+            // 有没有一个被最小化的游戏窗口？单独记一笔，用来区分「游戏没开」和「游戏最小化了」
+            bool minimizedHit = false;
+
+            WinInfo? best = null;
+            int bestRank = int.MaxValue;
+            int bestArea = -1;
+
+            void Consider(WinInfo w, int rank)
             {
-                EnumWindows((hwnd, lparam) =>
+                if (OwnedByGame(w) && w.Iconic) minimizedHit = true;
+                if (!Usable(w)) return;
+                int area = w.Area;
+                if (rank < bestRank || (rank == bestRank && area > bestArea))
                 {
-                    if (!IsWindowVisibleNative(hwnd)) return true;
-                    var cb = new System.Text.StringBuilder(256);
-                    if (GetClassName(hwnd, cb, cb.Capacity) > 0 && cb.ToString() == "UnityWndClass")
-                    {
-                        if (GetWindowRect(hwnd, out RECT rr))
-                        {
-                            found = hwnd; r = rr;
-                            return false;
-                        }
-                    }
-                    return true;
-                }, IntPtr.Zero);
+                    best = w; bestRank = rank; bestArea = area;
+                }
             }
 
-            if (found != IntPtr.Zero)
+            foreach (WinInfo w in wins)
             {
-                left = r.Left; top = r.Top; right = r.Right; bottom = r.Bottom;
-                return true;
+                bool unity = string.Equals(w.Class, "UnityWndClass", StringComparison.Ordinal);
+                bool titled = w.Title.Length > 0 && w.Title.ToLowerInvariant().Contains(needle);
+
+                if (OwnedByGame(w)) Consider(w, unity ? 0 : 1);
+                else if (titled) Consider(w, 2);
+            }
+
+            if (best.HasValue) { win = best.Value; return true; }
+
+            if (minimizedHit)
+            {
+                minimized = true;
+                reason = "游戏窗口已最小化，暂时不吸附";
+            }
+            else if (pidSet.Count == 0)
+            {
+                reason = "没找到 ADOFAI 进程（游戏没开？）";
+            }
+            else
+            {
+                reason = $"找到 {pidSet.Count} 个 ADOFAI 进程，但没有可用的顶层窗口（游戏还在启动？）";
             }
             return false;
+        }
+
+        /// <summary>
+        /// 找 ADOFAI 游戏窗口：按进程归属 + 标题 + Unity 窗口类三重判定（见
+        /// <see cref="PickGameWindow"/>）。命中返回物理像素矩形。
+        /// </summary>
+        /// <param name="pids">ADOFAI 的进程 ID（可空；空则只按标题 / 窗口类认）。</param>
+        /// <param name="reason">未命中时的原因（诊断用）。</param>
+        /// <param name="info">命中时的窗口快照（诊断用）。</param>
+        public static bool FindGameWindow(string titlePart, IList<int> pids,
+                                          out int left, out int top, out int right, out int bottom,
+                                          out string reason, out WinInfo info)
+        {
+            left = top = right = bottom = 0;
+            reason = null;
+            info = default;
+
+            var wins = ListVisibleTopLevelWindows();
+            int self = System.Diagnostics.Process.GetCurrentProcess().Id;
+            if (!PickGameWindow(wins, titlePart, pids, self, out WinInfo w, out bool minimized, out reason))
+            {
+                if (minimized) reason = "游戏窗口已最小化，暂时不吸附";
+                return false;
+            }
+
+            info = w;
+            left = w.Left; top = w.Top; right = w.Right; bottom = w.Bottom;
+            return true;
         }
 
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);

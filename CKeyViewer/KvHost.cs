@@ -783,11 +783,22 @@ namespace CKeyViewer
             _window.Width = wDip;
             _window.Height = hDip;
 
+            // 把「走了哪个分支、游戏窗口找到没有」一并写出来。
+            // 原来只打 custom=（而且打的是 CustomPositionEnabled，不是 IsCustom）——
+            // 「为什么没吸附到游戏窗口」在日志里完全看不出来，只能靠猜。
+            string branch = snapGame ? "game"
+                          : anchor != 0 && !custom ? "work"
+                          : P.CustomPositionEnabled && !custom ? "norm"
+                          : custom ? "free" : "default";
+
             Diag.Log(string.Format(
-                "geom block={0:0.##}x{1:0.##} ref->dip={2:0.####} custom={3} dpi={4:0.###} " +
-                "-> dip L={5:0.##} T={6:0.##} W={7:0.##} H={8:0.##}",
+                "geom block={0:0.##}x{1:0.##} ref->dip={2:0.####} customPos={3} dpi={4:0.###} " +
+                "-> dip L={5:0.##} T={6:0.##} W={7:0.##} H={8:0.##} | branch={9} snapToGame={10} " +
+                "gameFound={11} keyAnchor={12} workAnchor={13}",
                 blockWidth, blockHeight, scale, P.CustomPositionEnabled, dpi,
-                _window.Left, _window.Top, _window.Width, _window.Height));
+                _window.Left, _window.Top, _window.Width, _window.Height,
+                branch, _adofaiOverlay.Settings.SnapToGame, _gameFound,
+                _adofaiOverlay.Settings.KeyAnchor, anchor));
         }
 
         // ---------------------------------------------------------------
@@ -896,8 +907,26 @@ namespace CKeyViewer
         {
             double now = Now();
 
+            // 帧间隔：所有缓动都按它算，而不是假设「每帧固定 8ms」。
+            // DispatcherTimer 名义上 8ms，实际会被系统计时器粒度（~15.6ms）
+            // 和负载拖慢，按帧计的动画速度就会飘。
+            _tickDt = _lastTickAt > 0
+                ? System.Math.Clamp(now - _lastTickAt, 0.001, 0.25)
+                : 0.008;
+            _lastTickAt = now;
+
             WatchWorkArea();
             PollGameWindow(now);
+
+            // 游戏窗口消失的宽限期过了（关掉游戏 / 最小化到任务栏 / 关掉了那一项设置）：
+            // 把按键层摆回工作区吸附的位置，别让它冻在游戏窗口的旧角上。
+            if (_geomReapplyAt > 0 && now >= _geomReapplyAt)
+            {
+                _geomReapplyAt = 0;
+                if (_geomBlockW > 0 && _geomBlockH > 0)
+                    ApplyWindowGeometry(_geomBlockW, _geomBlockH, _geomScale);
+            }
+
             AdofaiTick(now);
             HandleWindowDrag();
             FollowGameWindow();
@@ -990,6 +1019,10 @@ namespace CKeyViewer
         private double _lastPaint;
         private const double IdlePaintInterval = 0.5;
 
+        /// <summary>上一帧到现在的时间（秒）—— 缓存/动画都按它算，别假设固定 8ms。</summary>
+        private double _tickDt = 0.008;
+        private double _lastTickAt;
+
         // ---------------------------------------------------------------
         // ADOFAI Overlayer（冰与火之舞）
         // ---------------------------------------------------------------
@@ -1010,6 +1043,15 @@ namespace CKeyViewer
         private bool _gameFound;
         private Rect _gameRectDip;       // 游戏窗口矩形（DIP，虚拟屏幕坐标）
         private double _gamePollAt;
+        private double _gameFollowUntil;   // 窗口还在移动 → 这段时间内提高轮询频率
+        private int[] _gamePids = System.Array.Empty<int>();   // ADOFAI 进程列表（窗口按 PID 认）
+        private double _gamePidAt;
+        private string _gameWinDesc = "";    // 命中时的「标题（PID n）」
+        private string _gameWinReason;       // 未命中时的原因
+        /// <summary>游戏窗口刚刚消失 → 到点后把按键层退回普通吸附。</summary>
+        private double _geomReapplyAt;
+        /// <summary>游戏窗口刚刚找到 → 第一帧直接落位，别从屏幕中间慢慢飞过去。</summary>
+        private bool _gameJumpNext;
         private Rect _adofaiArea;        // 信息层窗口当前想占的矩形（DIP）
         private bool _adofaiAnimating;
 
@@ -1084,11 +1126,11 @@ namespace CKeyViewer
 
         /// <summary>
         /// 把信息层窗口按指数缓动滑到 <paramref name="target"/>：游戏移动 / 缩放时整块平滑跟随；
-        /// 接近目标就直接贴合，停止动画。动画期间持续重绘，元素才会跟着新尺寸重新排布。
+        /// 接近目标就直接贴合，停止动画。尺寸变化时才重绘，元素才会跟着新矩形重新排布。
         /// </summary>
         private void AnimateAdofaiWindow(Adofai.AdofaiWindow w, Rect target)
         {
-            const double k = 0.3;
+            double k = EaseK(_tickDt);
             double nl = w.Left + (target.Left - w.Left) * k;
             double nt = w.Top + (target.Top - w.Top) * k;
             double nw = w.Width + (target.Width - w.Width) * k;
@@ -1109,13 +1151,34 @@ namespace CKeyViewer
                 _adofaiAnimating = true;
             }
 
+            // ------------------------------------------------------------------
+            // 只有**尺寸**真的变了才重画。
+            //
+            // 这正是「信息层跟随时发卡、按键层反而顺滑」的根因：信息层的绘制面是
+            // 整块屏幕（1920×1080），而内容是相对窗口本地坐标画的 —— 纯平移时画面
+            // 逐像素相同，DWM 直接换个位置贴上去就行，根本不用重画。原来每帧都
+            // w.Invalidate()，等于每秒上百次在 1920×1080 上把 8 个元素（含
+            // FormattedText 排版）全部重排重画一遍，UI 线程扛不住就开始掉帧。
+            // 按键层的窗口只有几百像素宽，同样的写法自然看不出问题。
+            // ------------------------------------------------------------------
+            bool resized = System.Math.Abs(nw - w.Width) > 0.01 ||
+                           System.Math.Abs(nh - w.Height) > 0.01;
+
             w.Left = nl;
             w.Top = nt;
-            w.Width = nw;
-            w.Height = nh;
+            if (resized)
+            {
+                w.Width = nw;
+                w.Height = nh;
+            }
+
             _adofaiArea = target;
-            _adofaiSig = null;
-            w.Invalidate();
+
+            if (resized)
+            {
+                _adofaiSig = null;   // 尺寸变了 → 元素要按新矩形重排，必须重画
+                w.Invalidate();
+            }
         }
 
         /// <summary>按键覆盖层自己的动态吸附：工作区变了就按锚点重摆（不重算大小）。</summary>
@@ -1145,27 +1208,83 @@ namespace CKeyViewer
         private void PollGameWindow(double now)
         {
             if (now < _gamePollAt) return;
-            _gamePollAt = now + 0.25;
+
+            // 跟随中把轮询提到 ~33ms：目标 0.25 秒才跳一次的话，缓动会在两次跳之间
+            // 「追到位 → 停住 → 再跳」，大块的信息层看得很明显（小窗口的按键层不明显）。
+            // 窗口静止后自动退回 0.25s，免得为一个不动的窗口每秒枚举三十次窗口列表。
+            _gamePollAt = now + (_gameFollowUntil > now ? 0.033 : 0.25);
 
             var st = _adofaiOverlay.Settings;
             if (!st.SnapToGame)
             {
-                _gameFound = false;
+                SetGameFound(false, "未开启「吸附到游戏窗口」");
                 return;
             }
 
-            if (Win32.FindGameWindow(st.GameWindowMatch, out int l, out int t, out int r, out int b))
+            // 进程列表每秒刷一次：EnumProcesses 比 EnumWindows 贵，而进程列表基本不变。
+            // 窗口按 PID 认比按标题认可靠 —— Unity Mod Manager 会改写窗口标题。
+            if (now >= _gamePidAt)
+            {
+                _gamePidAt = now + 1.0;
+                _gamePids = Adofai.AdofaiReader.LiveProcessIds();
+            }
+
+            if (Win32.FindGameWindow(st.GameWindowMatch, _gamePids,
+                                     out int l, out int t, out int r, out int b,
+                                     out string reason, out Win32.WinInfo info))
             {
                 double dpi = _window.DpiScale;
                 var rect = new Rect(l / dpi, t / dpi, (r - l) / dpi, (b - t) / dpi);
                 // 游戏窗口移动 / 缩放 → 重算按键覆盖层的目标角，交由 FollowGameWindow 平滑滑过去
-                if (!_gameFound || AreaChanged(_gameRectDip, rect)) RecomputeKeyGameTarget();
+                if (!_gameFound || AreaChanged(_gameRectDip, rect))
+                {
+                    RecomputeKeyGameTarget();
+                    _gameFollowUntil = now + 0.6;   // 继续快速轮询，直到窗口稳定下来
+                    Diag.Log(string.Format(
+                        "gamewin {0} {1} {2:0.#}x{3:0.#} @ ({4:0.#},{5:0.#}) pid={6} cls={7}",
+                        _gameFound ? "moved" : "found", info.Title,
+                        rect.Width, rect.Height, rect.Left, rect.Top, info.Pid, info.Class));
+                }
                 _gameRectDip = rect;
-                _gameFound = true;
+                _gameWinDesc = (info.Title.Length > 0 ? info.Title : "（无标题窗口）") + " (PID " + info.Pid + ")";
+                SetGameFound(true, null);
             }
             else
             {
-                _gameFound = false;
+                SetGameFound(false, reason);
+            }
+        }
+
+        /// <summary>
+        /// 更新「找到游戏窗口」状态。**从「找到」变成「没找到」时必须在稍后重排一次几何** ——
+        /// <see cref="FollowGameWindow"/> 在没找到时直接 return，不会去动窗口，
+        /// 于是覆盖层就冻在上一次贴的那个游戏窗口角上。用户看到的正是
+        /// 「游戏全屏之后按键还贴在全屏之前那个角」。
+        /// <para>
+        /// 但不立刻重排：切全屏（Alt+Enter）的那一瞬间窗口会短暂变成「图标化」，
+        /// 立刻退回工作区吸附会让覆盖层**闪一下再跳回来**。留 0.6 秒宽限，
+        /// 期间窗口回来了就当无事发生；真的没了（关掉游戏 / 最小化到任务栏）才退回。
+        /// </para>
+        /// </summary>
+        private void SetGameFound(bool found, string reason)
+        {
+            _gameWinReason = reason;
+            if (_gameFound == found) return;
+            _gameFound = found;
+
+            if (!found)
+            {
+                _geomReapplyAt = Now() + 0.6;
+                Diag.Log("gamewin lost: " + (reason ?? "") + " -> 0.6s 后退回普通吸附");
+            }
+            else
+            {
+                // 宽限期内窗口又回来了：取消退回
+                _geomReapplyAt = 0;
+
+                // 刚连上游戏窗口：第一帧直接落位。用缓动的话会从「工作区吸附的位置」
+                // 一路滑到游戏角上，看起来像覆盖层自己乱跑。
+                _gameJumpNext = true;
             }
         }
 
@@ -1182,6 +1301,19 @@ namespace CKeyViewer
                                 out _geomTargetLeft, out _geomTargetTop);
         }
 
+        /// <summary>指数缓动的时间常数（秒）。</summary>
+        private const double FollowTau = 0.035;
+
+        /// <summary>
+        /// 按帧间隔算逼近比例：<c>k = 1 - exp(-dt / tau)</c>。
+        /// <para>
+        /// 原来写死「每帧乘 0.28」，速度就绑死在帧率上 —— WPF 的 DispatcherTimer
+        /// 在负载高时会成批合并回调，慢帧一步走一大格、快帧走一小格，看起来正是
+        /// 一顿一顿的。换成按 dt 算之后，掉帧和 125Hz 的观感是一样的。
+        /// </para>
+        /// </summary>
+        private static double EaseK(double dt) => 1.0 - System.Math.Exp(-dt / FollowTau);
+
         /// <summary>
         /// 让按键覆盖层平滑追随游戏窗口：每帧把当前位置按指数缓动往目标角挪一点，
         /// 游戏静止时目标等于当前位置、不再移动；游戏一移动，覆盖层就滑过去。
@@ -1195,6 +1327,16 @@ namespace CKeyViewer
 
             double tx = _geomTargetLeft, ty = _geomTargetTop;
             double curL = _window.Left, curT = _window.Top;
+
+            // 刚连上游戏窗口：直接落位（见 SetGameFound）
+            if (_gameJumpNext)
+            {
+                _gameJumpNext = false;
+                _window.Left = tx;
+                _window.Top = ty;
+                return;
+            }
+
             double dL = tx - curL, dT = ty - curT;
             if (System.Math.Abs(dL) < 0.4 && System.Math.Abs(dT) < 0.4)
             {
@@ -1203,7 +1345,7 @@ namespace CKeyViewer
                 return;
             }
 
-            const double k = 0.28;   // 每帧逼近比例，越大跟得越紧
+            double k = EaseK(_tickDt);
             _window.Left = curL + dL * k;
             _window.Top = curT + dT * k;
         }
@@ -1284,8 +1426,42 @@ namespace CKeyViewer
             get
             {
                 if (!_adofaiOverlay.Settings.Enabled) return "未启用";
-                if (_adofai == null || !_adofai.IsConnected) return _adofai?.LastError ?? "未连接";
+                if (_adofai == null || !_adofai.IsConnected)
+                {
+                    string why = _adofai?.LastError ?? "未连接";
+                    // 游戏没开时明确说出来，别让用户以为是权限问题
+                    if (Adofai.AdofaiReader.LiveProcessIds().Length == 0 && why.Contains("进程"))
+                        why += "（游戏没在运行）";
+                    return why;
+                }
                 return _adofaiOverlay.Visible ? "已连接（关卡中）" : "已连接（等待进入关卡）";
+            }
+        }
+
+        /// <summary>
+        /// 按键层现在是不是**真的**在贴游戏窗口 —— 设置开着 **且** 窗口已经找到。
+        /// <para>
+        /// 设置面板那个九宫格必须按这个结果去读写。只看 <c>SnapToGame</c> 的话，
+        /// 游戏没开 / 窗口没找到时，用户改的是 <c>KeyAnchor</c>，而覆盖层实际用的是
+        /// <c>Anchor</c> —— 屏幕上毫无反应，用户看到的就是「选了右下角却没吸过去」。
+        /// </para>
+        /// </summary>
+        public bool KeyFollowsGame => _adofaiOverlay.Settings.SnapToGame && _gameFound;
+
+        /// <summary>游戏窗口查找状态（供设置界面显示，让「为什么没吸附」一眼可见）。</summary>
+        public string GameWindowStatus
+        {
+            get
+            {
+                if (!_adofaiOverlay.Settings.SnapToGame) return "未开启";
+                if (_gameFound)
+                {
+                    var r = _gameRectDip;
+                    return string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                        "已找到 {0}，窗口 {1:0}×{2:0} @ ({3:0},{4:0})",
+                        _gameWinDesc, r.Width, r.Height, r.Left, r.Top);
+                }
+                return "未找到：" + (_gameWinReason ?? "未知原因");
             }
         }
 

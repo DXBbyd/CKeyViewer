@@ -20,6 +20,18 @@ namespace CKeyViewer
                 return;
             }
 
+            // 现场取证：把「游戏窗口是哪一个 / 为什么没认出来」摊开（开着游戏跑）
+            if (args != null && args.Length > 0 &&
+                string.Equals(args[0], "--winprobe", StringComparison.OrdinalIgnoreCase))
+            {
+                Native.Win32.AttachParentConsole();
+                string outPath = args.Length > 1
+                    ? args[1]
+                    : System.IO.Path.Combine(AppContext.BaseDirectory, "ckv_winprobe.txt");
+                Environment.ExitCode = WinProbe.Run(outPath);
+                return;
+            }
+
             Core.Diag.Reset();
             Core.Diag.Log("=== start ===");
 
@@ -32,6 +44,9 @@ namespace CKeyViewer
                 Environment.Exit(1);
                 return;
             }
+            // 记一笔提权状态与自己的 PID：读游戏进程失败时，先要能区分
+            // 「我们没提权」和「游戏那边不让我们读」。
+            Core.Diag.Log("elevated=True pid=" + Environment.ProcessId);
 
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
                 Core.Diag.Log("AppDomain: " + e.ExceptionObject);
@@ -108,6 +123,12 @@ namespace CKeyViewer
 
                 Core.Diag.Log("config = " + store.ProfilePath(store.CurrentProfile));
 
+                // 启动时把 ADOFAI 进程现状记一笔：同名进程经常不止一个，
+                // 连不上时这是第一个要看的线索。
+                int[] adofaiPids = Adofai.AdofaiReader.ProcessIds();
+                Core.Diag.Log("adofai processes = " +
+                    (adofaiPids.Length == 0 ? "none" : string.Join(",", adofaiPids)));
+
 #if DEBUG
                 // 截图 / 调试用：直接打开设置面板，省得发模拟按键去抢用户的键盘。
                 // 值 = 标签页下标，-1 表示沿用上次记住的那一页。Release 里整段被编译掉。
@@ -169,6 +190,105 @@ namespace CKeyViewer
                         host.SetLayoutMode(true, "CKV_LAYOUT");
                     };
                     t2.Start();
+                }
+
+                // 截图用：打开设置面板第 n 页并滚到指定位置，**停在那儿**
+                //（CKV_SCROLLTEST 最后会显式回顶，所以截不了页面下半截）。
+                // 值 = "标签页下标,偏移量"，偏移可省略。Release 里整段被编译掉。
+                string scrollTo = Environment.GetEnvironmentVariable("CKV_SCROLLTO");
+                if (!string.IsNullOrEmpty(scrollTo))
+                {
+                    string[] parts = scrollTo.Split(',');
+                    int stTab2 = 0, stOff = 0;
+                    if (parts.Length > 0) int.TryParse(parts[0], out stTab2);
+                    if (parts.Length > 1) int.TryParse(parts[1], out stOff);
+
+                    var tA = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+                    tA.Tick += (s, e) =>
+                    {
+                        tA.Stop();
+                        openSettings(stTab2);
+
+                        var tB = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+                        tB.Tick += (s2, e2) =>
+                        {
+                            tB.Stop();
+                            if (settings == null) { Core.Diag.Log("scrollto: 没有设置窗口"); return; }
+                            settings.DebugScrollTo(stOff);
+
+                            // ScrollToVerticalOffset 要等下一轮布局才生效，落定后再补一次
+                            var tC = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                            tC.Tick += (s3, e3) =>
+                            {
+                                tC.Stop();
+                                settings.DebugScrollTo(stOff);
+                                Core.Diag.Log("scrollto: tab=" + stTab2 + " offset=" +
+                                              settings.DebugScrollOffset.ToString("0.0"));
+                            };
+                            tC.Start();
+                        };
+                        tB.Start();
+                    };
+                    tA.Start();
+                }
+
+                // 调试用：验证「改一个选项不会把设置页跳回顶部」。
+                // 这台机器发不了模拟点击（SendInput / SetCursorPos 是空操作），只能这样驱动：
+                //   滚到中间 → 就地重建一次 → 再显式回顶重建一次（对照组）→ 前后偏移量全打进日志。
+                // 值 = 标签页下标。Release 里整段被编译掉。
+                string scrollTest = Environment.GetEnvironmentVariable("CKV_SCROLLTEST");
+                if (!string.IsNullOrEmpty(scrollTest))
+                {
+                    int stTab;
+                    if (!int.TryParse(scrollTest, out stTab)) stTab = 0;
+
+                    var t5 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+                    t5.Tick += (s, e) =>
+                    {
+                        t5.Stop();
+                        openSettings(stTab);
+
+                        var t6 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+                        t6.Tick += (s2, e2) =>
+                        {
+                            t6.Stop();
+                            if (settings == null) { Core.Diag.Log("scrolltest: 没有设置窗口"); return; }
+
+                            // ScrollToVerticalOffset 不是同步生效的（要等下一轮布局），
+                            // 所以每个读数都必须等它落定之后再取。
+                            settings.DebugScrollTo(400);
+
+                            var t7 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                            t7.Tick += (s3, e3) =>
+                            {
+                                t7.Stop();
+                                Core.Diag.Log("scrolltest: 滚到 400 之后落定 = " + settings.DebugScrollOffset.ToString("0.0"));
+
+                                settings.DebugRebuildInPlace();
+                                var t8 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                                t8.Tick += (s4, e4) =>
+                                {
+                                    t8.Stop();
+                                    Core.Diag.Log("scrolltest: 就地重建后 = " + settings.DebugScrollOffset.ToString("0.0")
+                                                  + "   （保持 = 对，回 0 = 错）");
+
+                                    settings.DebugRebuildFromTop();
+                                    var t9 = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                                    t9.Tick += (s5, e5) =>
+                                    {
+                                        t9.Stop();
+                                        Core.Diag.Log("scrolltest: 对照组（显式回顶）后 = " + settings.DebugScrollOffset.ToString("0.0")
+                                                      + "   （必须是 0）");
+                                    };
+                                    t9.Start();
+                                };
+                                t8.Start();
+                            };
+                            t7.Start();
+                        };
+                        t6.Start();
+                    };
+                    t5.Start();
                 }
 #endif
 

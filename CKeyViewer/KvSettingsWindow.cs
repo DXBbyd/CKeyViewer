@@ -206,7 +206,7 @@ namespace CKeyViewer
                 _tab = _nav.SelectedIndex;
                 _host.Store.Settings.UiTab = _tab;
                 _host.QueueSave();
-                Rebuild();
+                Rebuild(keepScroll: false);   // 换页要回到顶部，别把上一页的偏移带过来
             };
             Grid.SetColumn(_nav, 0);
             Grid.SetRow(_nav, 1);
@@ -232,10 +232,11 @@ namespace CKeyViewer
             _host.LayoutStateChanged += OnLayoutStateChanged;
 
             // ADOFAI 的连接状态是随时间变的，光靠 Changed 事件刷新不到；
-            // 只在停在该标签页时每 500ms 刷一次文本（不重建控件树，免得闪烁）。
+            // 只在停在这两个标签页时每 500ms 刷一次文本（不重建控件树，免得闪烁）。
+            // 「吸附」页里也有一行游戏窗口状态，用的是同一个定时器。
             _adofaiTimer.Tick += (s, e) =>
             {
-                if (_tab == AdofaiTab) UpdateAdofaiStatus();
+                if (_tab == AdofaiTab || _tab == SnapTab) UpdateAdofaiStatus();
             };
             _adofaiTimer.Start();
 
@@ -330,10 +331,10 @@ namespace CKeyViewer
                 _suppress = false;
             }
 
-            if (rebuild)             // 每次显示（首次打开 / 从托盘重新唤起）都来一次出场动画
-            Loaded += (s, e) => AnimateWindowOpen();
-
-            Rebuild();
+            // 只有**结构性**改动（换档案 / 换布局样式）才重排到顶并重播入场动画；
+            // 普通勾选 / 滑动条只重建内容、保持滚动位置 —— 否则每改一项页面都跳回
+            // 顶部，长页面根本没法连着调好几项。
+            Rebuild(keepScroll: !rebuild);
             UpdateHeader();
         }
 
@@ -341,7 +342,30 @@ namespace CKeyViewer
         // 页面构建
         // ---------------------------------------------------------------
 
-        private void Rebuild() => Rebuild(false);
+        /// <summary>
+        /// 就地重建当前页（默认**保持滚动位置**）。
+        /// <para>
+        /// 「点一个选项就跳回顶部」的坑就在这个默认值上：页面里几百个控件的回调写的都是
+        /// <c>Rebuild()</c>，只要默认是「回到顶部」，随便点哪个都在跳。
+        /// 反过来说，只有**换标签页 / 换档案 / 换布局样式**这类「整页换掉」的场合才该回顶，
+        /// 那些地方显式写 <c>Rebuild(keepScroll: false)</c>。
+        /// </para>
+        /// </summary>
+        private void Rebuild() => Rebuild(keepScroll: true);
+
+#if DEBUG
+        // ---- 调试钩子（Release 里整段编译掉）------------------------------------
+        // 这台机器上 SendInput / SetCursorPos 都是空操作，点不了任何按钮，
+        // 「改一项设置会不会跳回顶部」只能这样驱动出来量。
+        public double DebugScrollOffset => _scroll.VerticalOffset;
+        public void DebugScrollTo(double v) => _scroll.ScrollToVerticalOffset(v);
+
+        /// <summary>模拟「点了一个选项」—— 走的就是页面里那几百个回调用的 Rebuild()。</summary>
+        public void DebugRebuildInPlace() => Rebuild();
+
+        /// <summary>对照组：显式要求回顶的重建（换标签页走的那条路）。</summary>
+        public void DebugRebuildFromTop() => Rebuild(keepScroll: false);
+#endif
 
         private void Rebuild(bool keepScroll)
         {
@@ -350,6 +374,10 @@ namespace CKeyViewer
 
             double offset = keepScroll ? _scroll.VerticalOffset : 0;
             var panel = new StackPanel();
+
+            // 上一轮的实时状态控件已经不在树上，先丢引用，免得定时器往僵尸控件上写
+            _adofaiStatus = null;
+            _gameWinStatus = null;
 
             // iOS 的大标题：页面顶部来一行「标题 + 一句说明」，比在窄标题栏里塞小字清楚得多
             panel.Children.Add(Kit.LargeTitle(Tabs[_tab], SubtitleFor(_tab)));
@@ -387,10 +415,32 @@ namespace CKeyViewer
 
             _body.Content = panel;
 
-            if (keepScroll && offset > 0)
+            // keepScroll：就地重建（改一个开关 / 拖一条滑杆）—— 位置原样保留，
+            // 也不重播入场动画，不然每改一次都会闪一下。
+            if (keepScroll)
             {
-                _scroll.UpdateLayout();
-                _scroll.ScrollToVerticalOffset(offset);
+                if (offset > 0)
+                {
+                    // 两个把偏移量顶回 0 的来源，都得堵：
+                    //  1) 换掉 Content 之后 ScrollViewer 的 ExtentHeight 会先短暂变成 0，
+                    //     那一刻偏移被夹回 0；
+                    //  2) 控件树重建后焦点落空，WPF 会把焦点给第一个可聚焦元素并对它
+                    //     BringIntoView —— 页面就自己滚上去了。
+                    // 当场还原一次（防闪），再在「布局跑完」和「空闲」各补一次。
+                    _scroll.UpdateLayout();
+                    _scroll.ScrollToVerticalOffset(offset);
+
+                    var built = panel;
+                    Action restore = () =>
+                    {
+                        // 期间又重建 / 换页了就别动，免得把新页面拽到旧位置
+                        if (!ReferenceEquals(_body.Content, built)) return;
+                        if (_scroll.VerticalOffset < offset - 0.5)
+                            _scroll.ScrollToVerticalOffset(offset);
+                    };
+                    Dispatcher.BeginInvoke(restore, System.Windows.Threading.DispatcherPriority.Loaded);
+                    Dispatcher.BeginInvoke(restore, System.Windows.Threading.DispatcherPriority.Background);
+                }
             }
             else
             {
@@ -541,8 +591,14 @@ namespace CKeyViewer
                     if (v) _host.Show(); else _host.Hide();
                 });
             }));
-            p.Children.Add(Kit.Check("流媒体模式（隐藏 KPS / Total 数字）", () => P.StreamerMode,
-                v => Apply(() => P.StreamerMode = v)));
+            p.Children.Add(Kit.Check("流媒体模式（整条隐藏 KPS / Total）", () => P.StreamerMode,
+                v => Apply(() => P.StreamerMode = v, rebuild: true)));
+            if (P.StreamerMode)
+            {
+                // 这条坑过一次：开了之后 KPS / Total 整个不见，用户会以为渲染坏了。
+                p.Children.Add(Kit.Hint("已开启 —— KPS 与累计总数两条会被整个隐藏" +
+                                        "（连底框描边一起，与原版一致）。想看到它们就关掉这一项。"));
+            }
 
             p.Children.Add(Kit.Section("界面主题"));
             p.Children.Add(Kit.Hint("影响设置面板与安装程序的外观，不影响覆盖层本身。"));
@@ -641,16 +697,37 @@ namespace CKeyViewer
         private void BuildSnap(Panel p)
         {
             var s = _host.Store.Settings;
+            var a = _host.AdofaiSettings;
             bool custom = KvGeometry.IsCustom(P.StyleEnum);
 
+            // 「吸附到游戏窗口」开着 **并且已经找到窗口** 时，按键实际贴的是游戏窗口、
+            // 生效的锚点是 a.KeyAnchor，工作区吸附整个让位。这时这个九宫格就必须去改
+            // a.KeyAnchor —— 否则用户改了半天没反应，看着就像「选了右下角却被吸到中间」。
+            //
+            // 注意判断用的是 _host.KeyFollowsGame 而不是 a.SnapToGame：
+            // 只勾了开关、游戏却还没开（或窗口没找到）时，实际生效的是 s.Anchor，
+            // 光看设置就会改错字段 —— 这正是「选了右下角没反应」的成因。
+            bool keyFollowsGame = _host.KeyFollowsGame;
+
             p.Children.Add(Kit.Section("按键覆盖层"));
-            p.Children.Add(Kit.Hint(
-                "把整块按键贴到屏幕的固定位置。这里对着的是「工作区」——即时算出屏幕去掉任务栏后的区域，\r\n" +
-                "所以吸附到「左下」不会压在任务栏图标上。吸附只改位置、不改大小。"));
+            p.Children.Add(Kit.Hint(keyFollowsGame
+                ? "注意：「吸附到游戏窗口」开着且已找到游戏窗口 —— 按键现在贴着游戏窗口摆，\r\n" +
+                  "所以下面这个九宫格决定的是「按键贴游戏窗口的哪个角」。"
+                : (a.SnapToGame
+                    ? "「吸附到游戏窗口」开着，但当前**没找到**游戏窗口，按键暂时按工作区吸附摆。\r\n" +
+                      "轻点九宫格仍然两个都记下来 —— 等游戏开起来会自动按同一个角贴过去。"
+                    : "把整块按键贴到屏幕的固定位置。这里对着的是「工作区」——即时算出屏幕去掉任务栏后的区域，\r\n" +
+                      "所以吸附到「左下」不会压在任务栏图标上。吸附只改位置、不改大小。")));
             p.Children.Add(Kit.Row("吸附位置", Kit.AnchorPicker(
-                () => s.Anchor,
+                // 取的是**实时**状态：设置页停在这儿的时候用户去把游戏开起来，
+                // 九宫格要立刻反映到 a.KeyAnchor 上，而不是停在建页面时那一帧的判断。
+                () => _host.KeyFollowsGame ? a.KeyAnchor : s.Anchor,
                 v =>
                 {
+                    // 两个字段都写。贴游戏窗口时生效的是 a.KeyAnchor，游戏一关就退回
+                    // s.Anchor —— 只写一个的话两条分支给出的角会不一致，
+                    // 用户看到的就是「选了这个角、吸到那个角」。
+                    a.KeyAnchor = v;
                     s.Anchor = v;
                     _host.QueueSave();
                     _host.Rebuild();
@@ -676,14 +753,14 @@ namespace CKeyViewer
 
             if (custom)
                 p.Children.Add(Kit.Hint("当前是自由布局：覆盖层铺满整屏、节点各自定位，吸附不生效。"));
+            else if (keyFollowsGame)
+                p.Children.Add(Kit.Hint("按键当前跟着游戏窗口走；游戏没运行时它退回工作区吸附。"));
             else if (s.Anchor == 0)
                 p.Children.Add(Kit.Hint(P.CustomPositionEnabled
                     ? "现在是「自由摆放」：位置由「布局」页的自定义位置决定。想吸附就点上面的九宫格。"
                     : "现在是默认位置（水平居中、贴工作区底边）。"));
 
             // ---- 信息层 ----
-
-            var a = _host.AdofaiSettings;
 
             p.Children.Add(Kit.Section("冰与火之舞信息层"));
             p.Children.Add(Kit.Hint(
@@ -712,15 +789,28 @@ namespace CKeyViewer
             p.Children.Add(Kit.Section("吸附到 ADOFAI 游戏窗口"));
             p.Children.Add(Kit.Hint(
                 "开启后，按键覆盖层和信息层都贴着游戏窗口摆，游戏窗口移动 / 缩放时整块平滑跟随（带缓动动画）。\r\n" +
-                "游戏没运行时退回普通工作区吸附。按键贴游戏窗口的哪个角由下面的九宫格决定；信息层的位置见「ADOFAI」页的吸附设置。"));
+                "游戏没运行时退回普通工作区吸附。信息层的位置见「ADOFAI」页的吸附设置。"));
             p.Children.Add(Kit.Check("吸附到游戏窗口（带平滑动画）",
                 () => a.SnapToGame,
                 v => { a.SnapToGame = v; _host.QueueSave(); _host.Rebuild(); Rebuild(); }));
+
+            // 实时状态：游戏窗口到底找到没有、找的是哪一个。以前这里什么都没有，
+            // 用户只能看到「没吸附」，猜不出是没开游戏、标题不匹配、还是游戏最小化了。
+            _gameWinStatus = Kit.Text2("", 12, Kit.Sub);
+            _gameWinStatus.Margin = new Thickness(0, 4, 0, 6);
+            _gameWinStatus.TextWrapping = TextWrapping.Wrap;
+            p.Children.Add(_gameWinStatus);
+            UpdateAdofaiStatus();
+
             p.Children.Add(Kit.TextBoxRow("游戏窗口匹配（标题包含）",
                 () => a.GameWindowMatch,
                 v => { a.GameWindowMatch = v ?? ""; _host.QueueSave(); }));
-            p.Children.Add(Kit.Row("按键贴游戏窗口",
-                Kit.AnchorPicker(() => a.KeyAnchor, v => { a.KeyAnchor = v; _host.QueueSave(); })));
+            // 「按键贴游戏窗口的哪个角」不在这里再放一个九宫格 —— 上面「按键覆盖层」
+            // 那个九宫格已经会自动切到 a.KeyAnchor（见 keyFollowsGame）。两个控件
+            // 改同一个值只会让人以为其中一个没生效。
+            p.Children.Add(Kit.Hint(
+                "按键贴游戏窗口的哪个角，用上面「按键覆盖层」那个九宫格调 —— 开着这一项时\r\n" +
+                "它会自动改成编辑「贴游戏窗口」的锚点。当前：" + KvSnap.NameOf(a.KeyAnchor) + "。"));
 
             p.Children.Add(Kit.HRow(
                 Kit.Button(_host.LayoutMode ? "退出拖动模式（Esc）" : "▶ 在屏幕上拖动摆放",
@@ -1752,6 +1842,20 @@ namespace CKeyViewer
 
         private void BuildStats(Panel p)
         {
+            // 开着流媒体模式时，这一页的「KPS / Total」是看不到的 —— 放在最上面直说，
+            // 省得再被当成渲染 bug 查一遍。
+            if (P.StreamerMode)
+            {
+                p.Children.Add(Kit.Section("⚠ KPS / Total 当前被隐藏"));
+                p.Children.Add(Kit.Hint(
+                    "「流媒体模式」开着时，KPS 与累计总数两条会整个不画（连底框和描边一起），\r\n" +
+                    "这是原版行为，不是渲染出错。关掉它就能重新看到两串数字。"));
+                p.Children.Add(Kit.Button("关闭流媒体模式，显示 KPS / Total", () =>
+                {
+                    Apply(() => P.StreamerMode = false, rebuild: true);
+                }, accent: true));
+            }
+
             p.Children.Add(Kit.Section("统计"));
             p.Children.Add(Kit.Hint(string.Format(
                 "累计按键总数：{0:N0}\r\n每秒按键（KPS）：{1}\r\n当前活跃雨线：{2}\r\n覆盖层可见：{3}\r\n位置：{4:N0} × {5:N0} 单位",
@@ -1800,6 +1904,8 @@ namespace CKeyViewer
         // ---- 10. ADOFAI（冰与火之舞）覆盖层 ----
 
         private TextBlock _adofaiStatus;
+        /// <summary>「吸附」页里的游戏窗口实时状态（复用下面那个 500ms 定时器刷新）。</summary>
+        private TextBlock _gameWinStatus;
         private readonly DispatcherTimer _adofaiTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(500)
@@ -1822,6 +1928,10 @@ namespace CKeyViewer
 
         private void UpdateAdofaiStatus()
         {
+            // 吸附页那一行也要跟着刷（它可能在第 3 页而当前在第 11 页，指针为空就跳过）
+            if (_gameWinStatus != null)
+                _gameWinStatus.Text = "游戏窗口：" + _host.GameWindowStatus;
+
             if (_adofaiStatus == null) return;
 
             string miss = _host.AdofaiMissingFields;

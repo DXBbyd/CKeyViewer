@@ -44,6 +44,18 @@ namespace CKeyViewer.Core
 
         public static int Clamp(int v) => v < Min ? Min : (v > Max ? Max : v);
 
+        /// <summary>
+        /// 按键层**当前真正生效**的锚点。
+        /// <para>
+        /// 「吸附到游戏窗口」开着时，按键贴的是游戏窗口、锚点取游戏那套
+        /// （<c>AdofaiSettings.KeyAnchor</c>），工作区吸附整体让位；否则用
+        /// <c>KvAppSettings.Anchor</c>。设置面板的九宫格必须按这个结果去读写，
+        /// 不然就会出现「改了没反应」——用户看到的症状是「选了右下角却被吸到中间」。
+        /// </para>
+        /// </summary>
+        public static int EffectiveKeyAnchor(bool snapToGame, int workAnchor, int gameAnchor)
+            => Clamp(snapToGame ? gameAnchor : workAnchor);
+
         /// <summary>当前工作区（DIP）。任务栏位置、分辨率变化都会立刻反映到这里。</summary>
         public static Rect WorkArea => SystemParameters.WorkArea;
 

@@ -530,11 +530,46 @@ namespace CKeyViewer.Ui
             return Row(label, btn);
         }
 
+        /// <summary>
+        /// 一小段说明文字。支持 <c>**加粗**</c>。
+        /// <para>
+        /// 之所以要拼 <c>Inlines</c> 而不是直接设 <c>TextBlock.Text</c>：
+        /// <c>Text</c> 不认任何标记，写 <c>**没找到**</c> 会把星号原样画到界面上
+        /// （踩过一次，「吸附」页的提示里露出裸星号）。**号不成对时整段按普通文字处理，
+        /// 免得把用户/作者真想要的星号吞掉。
+        /// </para>
+        /// </summary>
         public static FrameworkElement Hint(string text)
         {
-            var t = Text2(text, 11.5, Sub);
-            t.Margin = new Thickness(0, 1, 0, 4);
-            t.TextWrapping = TextWrapping.Wrap;
+            string src = (text ?? "").Replace("\r\n", "\n");
+
+            var t = new TextBlock
+            {
+                FontSize = 11.5,
+                FontFamily = UiFont,
+                Foreground = Sub,
+                Margin = new Thickness(0, 1, 0, 4),
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            string[] parts = src.Split(new[] { "**" }, StringSplitOptions.None);
+            if (parts.Length % 2 == 0)
+            {
+                // ** 不成对：原样显示
+                t.Inlines.Add(new System.Windows.Documents.Run(src));
+                return t;
+            }
+
+            // 切出来后下标为奇数的段落在 **…** 里面
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i].Length == 0) continue;
+                t.Inlines.Add(new System.Windows.Documents.Run(parts[i])
+                {
+                    FontWeight = i % 2 == 1 ? FontWeights.SemiBold : FontWeights.Normal,
+                });
+            }
             return t;
         }
 
