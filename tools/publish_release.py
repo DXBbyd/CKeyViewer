@@ -161,6 +161,13 @@ def main():
                                          {"body": body}), label="更新 notes")
         print("   已更新 Release notes")
 
+    # ---- 只改 notes、不碰资产 ----
+    # 改一个错别字 / 补一句说明时不想再传一遍 170 MB（上传一次 40 多秒）。
+    if "--body-only" in sys.argv:
+        print()
+        print("发布会话：%s" % release["html_url"])
+        return 0
+
     # ---- 传资产（同名先删，方便反复跑）----
     upload_base = release["upload_url"].split("{")[0]
     existing = {a["name"]: a for a in release.get("assets", [])}
