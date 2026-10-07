@@ -99,6 +99,84 @@ namespace CKeyViewer.Native
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
             int X, int Y, int cx, int cy, uint uFlags);
 
+        // ---- 枚举 / 查找窗口（吸附到 ADOFAI 游戏窗口用）----
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowTextLength(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        /// <summary>
+        /// 找 ADOFAI 游戏窗口：标题包含 <paramref name="titlePart"/>（不区分大小写）的可见顶层窗口；
+        /// 找不到时退回「Unity 游戏窗口」类（<c>UnityWndClass</c>，与语言无关）。
+        /// 命中返回物理像素矩形。找不到返回 false。
+        /// </summary>
+        public static bool FindGameWindow(string titlePart, out int left, out int top, out int right, out int bottom)
+        {
+            left = top = right = bottom = 0;
+            if (string.IsNullOrEmpty(titlePart)) titlePart = "A Dance of Fire and Ice";
+            string needle = titlePart.ToLowerInvariant();
+
+            IntPtr found = IntPtr.Zero;
+            RECT r = default;
+
+            EnumWindows((hwnd, lparam) =>
+            {
+                if (!IsWindowVisibleNative(hwnd)) return true;
+                int len = GetWindowTextLength(hwnd);
+                if (len > 0)
+                {
+                    var sb = new System.Text.StringBuilder(len + 1);
+                    GetWindowText(hwnd, sb, len + 1);
+                    string title = sb.ToString();
+                    if (title.Length > 0 && title.ToLowerInvariant().Contains(needle))
+                    {
+                        if (GetWindowRect(hwnd, out RECT rr))
+                        {
+                            found = hwnd; r = rr;
+                            return false;   // 标题命中即停
+                        }
+                    }
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            // 没按标题找到，退回 Unity 窗口类
+            if (found == IntPtr.Zero)
+            {
+                EnumWindows((hwnd, lparam) =>
+                {
+                    if (!IsWindowVisibleNative(hwnd)) return true;
+                    var cb = new System.Text.StringBuilder(256);
+                    if (GetClassName(hwnd, cb, cb.Capacity) > 0 && cb.ToString() == "UnityWndClass")
+                    {
+                        if (GetWindowRect(hwnd, out RECT rr))
+                        {
+                            found = hwnd; r = rr;
+                            return false;
+                        }
+                    }
+                    return true;
+                }, IntPtr.Zero);
+            }
+
+            if (found != IntPtr.Zero)
+            {
+                left = r.Left; top = r.Top; right = r.Right; bottom = r.Bottom;
+                return true;
+            }
+            return false;
+        }
+
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOSIZE = 0x0001;
@@ -225,6 +303,7 @@ namespace CKeyViewer.Native
         /// <summary>虚拟键码常量（布局模式的 Esc / 方向键 / 鼠标左键轮询用）。</summary>
         public const int VK_LBUTTON = 0x01;
         public const int VK_SHIFT = 0x10;
+        public const int VK_MENU = 0x12;   // 左 Alt：预设窗口「按住热键拖」的默认键
         public const int VK_ESCAPE = 0x1B;
         public const int VK_LEFT = 0x25;
         public const int VK_UP = 0x26;

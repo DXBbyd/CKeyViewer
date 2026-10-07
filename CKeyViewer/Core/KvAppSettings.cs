@@ -32,6 +32,17 @@ namespace CKeyViewer.Core
         public bool DragOnlyPosition { get; set; }
 
         /// <summary>
+        /// 「按住热键拖窗口」用到的虚拟键码（0 = 关闭该功能）。
+        /// 默认 <c>VK_MENU</c>(Alt)：按住 Alt 再用鼠标左键拖动覆盖层，即可把整套预设键位
+        /// 放到屏幕任意位置（全屏范围内移动），松手自动落盘。
+        /// <para>
+        /// 放在 settings.json（而非档案）：这是「这台机器上怎么操作」，跟用哪套键位无关，
+        /// 也免得往 profiles/*.json 里加字段破坏与 jipper 的双向兼容。
+        /// </para>
+        /// </summary>
+        public int DragHotkeyVk { get; set; } = 0x12;
+
+        /// <summary>
         /// 界面主题：<c>"dark"</c> / <c>"light"</c>。
         ///
         /// 放在 settings.json 而不是档案里 —— 这是「这台机器上界面长什么样」，
@@ -66,6 +77,7 @@ namespace CKeyViewer.Core
             Anchor = KvSnap.Clamp(Anchor);
             if (double.IsNaN(AnchorMargin) || double.IsInfinity(AnchorMargin)) AnchorMargin = 12;
             AnchorMargin = System.Math.Max(0, System.Math.Min(400, AnchorMargin));
+            if (DragHotkeyVk < 0) DragHotkeyVk = 0x12;
         }
     }
 }

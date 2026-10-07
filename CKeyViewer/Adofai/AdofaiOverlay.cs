@@ -216,6 +216,30 @@ public sealed class AdofaiSettings
     /// <summary>整块的对齐：0=左 1=中 2=右。</summary>
     public int Align { get; set; } = 1;
 
+    /// <summary>
+    /// 吸附到 ADOFAI 游戏窗口：开启后按键覆盖层与信息层都贴着游戏窗口摆，
+    /// 游戏窗口移动 / 缩放时跟着走（带平滑动画）；游戏没运行时退回普通工作区吸附。
+    /// </summary>
+    public bool SnapToGame { get; set; }
+
+    /// <summary>游戏窗口匹配串：标题包含该子串即命中（不区分大小写）；空则退回 "UnityWndClass" 类。</summary>
+    public string GameWindowMatch { get; set; } = "A Dance of Fire and Ice";
+
+    /// <summary>吸附到游戏窗口时，按键覆盖层贴游戏窗口的哪个角（<see cref="KvAnchor"/>）。</summary>
+    public int KeyAnchor { get; set; } = (int)KvAnchor.BottomCenter;
+
+    /// <summary>
+    /// 信息层布局预设（自动排列开启时生效）：0 堆叠 / 1 顶栏 / 2 底栏 / 3 左侧 / 4 右侧 / 5 精简。
+    /// 预设决定整块是横排还是竖排、以及默认贴在哪个边，进度条在内的元素都跟着重排。
+    /// </summary>
+    public int LayoutPreset { get; set; }
+
+    /// <summary>布局预设的中文名（下标即 <see cref="LayoutPreset"/>）。</summary>
+    public static readonly string[] LayoutPresetNames =
+    {
+        "堆叠（竖排）", "顶栏（横排）", "底栏（横排）", "左侧栏", "右侧栏", "精简",
+    };
+
     public double FontSize { get; set; } = 22;
     public bool Bold { get; set; } = true;
     public bool Italic { get; set; }
@@ -239,9 +263,18 @@ public sealed class AdofaiSettings
     public bool ShowAccuracy { get; set; } = true;
     public bool ShowXAccuracy { get; set; } = true;
     public bool ShowProgress { get; set; } = true;
-    public bool ShowBpm { get; set; } = true;
-    public bool ShowJudgement { get; set; } = true;
-    public bool ShowStats { get; set; } = true;
+        public bool ShowBpm { get; set; } = true;
+        public bool ShowJudgement { get; set; } = true;
+        public bool ShowStats { get; set; } = true;
+
+        /// <summary>PROG 元素是否额外画一条视觉进度条（而不只是文字）。</summary>
+        public bool ShowProgressBar { get; set; } = true;
+
+        /// <summary>进度条填充色（默认用一抹青绿，跟信息层主色区分开）。</summary>
+        public KvColor ProgressBarColor { get; set; } = KvColor.Rgba(0.27f, 0.95f, 0.55f, 1f);
+
+        /// <summary>进度条轨道底色（半透明白）。</summary>
+        public KvColor ProgressBarTrack { get; set; } = KvColor.Rgba(1f, 1f, 1f, 0.16f);
 
     /// <summary>连击是否把 Early/Late Perfect 算进去。</summary>
     public bool AllowElCombo { get; set; } = true;
@@ -322,6 +355,10 @@ public sealed class AdofaiSettings
         SnapAnchor = KvSnap.Clamp(SnapAnchor);
         if (double.IsNaN(SnapMargin)) SnapMargin = 24;
         SnapMargin = Math.Max(0, Math.Min(400, SnapMargin));
+        KeyAnchor = KvSnap.Clamp(KeyAnchor);
+        GameWindowMatch ??= "A Dance of Fire and Ice";
+        if (LayoutPreset < 0) LayoutPreset = 0;
+        if (LayoutPreset >= LayoutPresetNames.Length) LayoutPreset = 0;
 
         FontSize = Math.Max(4, Math.Min(400, FontSize));
         if (double.IsNaN(LineGap)) LineGap = 1.35;
@@ -393,6 +430,13 @@ public sealed class AdofaiOverlay
         public double X, Y;
         public double InnerGap;
 
+        /// <summary>该元素是不是 PROG（进度）。进度条只画在它下面。</summary>
+        public bool IsProg;
+        /// <summary>是否要画进度条（ShowProgressBar 且元素是 PROG）。</summary>
+        public bool ShowBar;
+        /// <summary>进度条高度（DIP，按字号缩放）。</summary>
+        public double BarH;
+
         public void Measure(double innerGap)
         {
             InnerGap = innerGap;
@@ -416,6 +460,12 @@ public sealed class AdofaiOverlay
                 double w = labelW + (ln.Label != null ? gap : 0) + ln.Value.Width;
                 if (w > Width) Width = w;
                 ln.ValueOffset = labelW > 0 && ln.Label != null ? labelW + gap : 0;
+            }
+
+            if (ShowBar)
+            {
+                BarH = Math.Max(3, innerGap * 0.9);
+                Height += innerGap + BarH;   // 文字与进度条之间留一点缝
             }
         }
     }
@@ -523,7 +573,8 @@ public sealed class AdofaiOverlay
             if (!text.TryGetValue(id, out var rows) || rows.Count == 0) continue;
 
             double fs = Math.Max(3, baseSize * el.FontScale);
-            var item = new Item { El = el };
+            var item = new Item { El = el, IsProg = id == AdofaiElements.Prog };
+            item.ShowBar = item.IsProg && Settings.ShowProgressBar;
 
             foreach (var (label, value, isTitle) in rows)
             {
@@ -581,7 +632,38 @@ public sealed class AdofaiOverlay
         // 工作区在窗口本地坐标里就是 (0,0,W,H) —— 窗口本身铺满工作区
         var local = new Rect(0, 0, area.Width, area.Height);
 
-        if (st.AutoLayout) LayoutStacked(items, local, groupW, groupH, gapPx);
+        if (st.AutoLayout)
+        {
+            int preset = st.LayoutPreset;
+            bool horizontal = preset == 1 || preset == 2 || preset == 5;
+            int anchor = preset switch
+            {
+                1 => (int)KvAnchor.TopCenter,
+                2 => (int)KvAnchor.BottomCenter,
+                3 => (int)KvAnchor.MiddleLeft,
+                4 => (int)KvAnchor.MiddleRight,
+                5 => (int)KvAnchor.BottomCenter,
+                _ => st.SnapAnchor,
+            };
+            // 精简：只留核心几行（其余被用户单独关掉的也不出现，因为 items 已按 Visible 过滤）
+            List<Item> shown = items;
+            if (preset == 5)
+            {
+                var core = new HashSet<string>
+                {
+                    AdofaiElements.Combo, AdofaiElements.Acc, AdofaiElements.XAcc, AdofaiElements.Prog
+                };
+                var filtered = new List<Item>();
+                foreach (var it in items)
+                    if (core.Contains(it.El.Id)) filtered.Add(it);
+                if (filtered.Count > 0) shown = filtered;
+            }
+            // 左侧 / 右侧栏：列内统一靠边，避免各行标签左中右乱跳
+            int forceAlign = preset == 3 ? 0 : preset == 4 ? 2 : -1;
+
+            if (horizontal) LayoutRow(shown, local, anchor, gapPx);
+            else LayoutStacked(shown, local, anchor, gapPx, forceAlign);
+        }
         else LayoutFree(items, local);
 
         Pen outline = st.HasOutline && st.OutlineWidth > 0
@@ -610,12 +692,20 @@ public sealed class AdofaiOverlay
         HasContent = false;
     }
 
-    /// <summary>自动排列：整块自上而下叠成一列，列内每个元素用各自的对齐。</summary>
-    void LayoutStacked(List<Item> items, Rect area, double groupW, double groupH, double gapPx)
+    /// <summary>自动排列（竖排）：整块自上而下叠成一列，列内每个元素用各自的对齐。</summary>
+    void LayoutStacked(List<Item> items, Rect area, int anchor, double gapPx, int forceAlign)
     {
         var st = Settings;
 
-        if (!KvSnap.Place(st.SnapAnchor, st.SnapMargin, groupW, groupH, area, out double left, out double top))
+        double groupW = 0, groupH = 0;
+        foreach (var it in items)
+        {
+            if (it.Width > groupW) groupW = it.Width;
+            groupH += it.Height;
+        }
+        groupH += gapPx * Math.Max(0, items.Count - 1);
+
+        if (!KvSnap.Place(anchor, st.SnapMargin, groupW, groupH, area, out double left, out double top))
         {
             // 没吸附：整块的位置由 X/Y + Align 决定（Align 指的是 X 落在块的哪条边）
             int ba = Math.Clamp(st.Align, 0, 2);
@@ -626,13 +716,46 @@ public sealed class AdofaiOverlay
         double y = top;
         foreach (var it in items)
         {
-            // 列内位置用元素自己的 Align —— 都靠左时「标签列 + 数值列」才竖着对成两列。
-            int a = Math.Clamp(it.El.Align, 0, 2);
+            // 列内位置用元素自己的 Align（被预设强制靠边时用 forceAlign）——
+            // 都靠左时「标签列 + 数值列」才竖着对成两列。
+            int a = forceAlign >= 0 ? forceAlign : Math.Clamp(it.El.Align, 0, 2);
             it.X = a == 0 ? left
                  : a == 1 ? left + (groupW - it.Width) * 0.5
                           : left + groupW - it.Width;
             it.Y = y;
             y += it.Height + gapPx;
+        }
+    }
+
+    /// <summary>
+    /// 自动排列（横排）：整块从左到右排成一行（顶栏 / 底栏 / 精简布局用）。
+    /// 每行高度取所有元素里最高的那个，元素之间留同样的缝。
+    /// </summary>
+    void LayoutRow(List<Item> items, Rect area, int anchor, double gapPx)
+    {
+        var st = Settings;
+
+        double groupW = 0, groupH = 0;
+        foreach (var it in items)
+        {
+            groupW += it.Width;
+            if (it.Height > groupH) groupH = it.Height;
+        }
+        groupW += gapPx * Math.Max(0, items.Count - 1);
+
+        if (!KvSnap.Place(anchor, st.SnapMargin, groupW, groupH, area, out double left, out double top))
+        {
+            int ba = Math.Clamp(st.Align, 0, 2);
+            left = st.X * area.Width - (ba == 1 ? groupW * 0.5 : ba == 2 ? groupW : 0);
+            top = st.Y * area.Height;
+        }
+
+        double x = left;
+        foreach (var it in items)
+        {
+            it.X = x;
+            it.Y = top;
+            x += it.Width + gapPx;
         }
     }
 
@@ -662,6 +785,23 @@ public sealed class AdofaiOverlay
             DrawText(dc, ln.Value, new Point(it.X + ln.ValueOffset, y), outline);
 
             y += h + it.InnerGap;
+        }
+
+        // 进度条（仅 PROG 元素）：轨道 + 填充
+        if (it.ShowBar)
+        {
+            double ratio = Math.Max(0, Math.Min(1, State.Progress));
+            double h = it.BarH;
+            double r = h * 0.5;
+            var trackRect = new Rect(it.X, y, it.Width, h);
+            dc.DrawRoundedRectangle(Settings.ProgressBarTrack.ToBrush(), null, trackRect, r, r);
+
+            double fillW = it.Width * ratio;
+            if (fillW > 0.5)
+            {
+                var fillRect = new Rect(it.X, y, fillW, h);
+                dc.DrawRoundedRectangle(Settings.ProgressBarColor.ToBrush(), null, fillRect, r, r);
+            }
         }
     }
 
@@ -875,10 +1015,14 @@ public sealed class AdofaiOverlay
     {
         var sb = new System.Text.StringBuilder(128);
         sb.Append(Settings.AutoLayout ? 'A' : 'F');
+        sb.Append('|').Append(Settings.LayoutPreset);
         sb.Append('|').Append(Settings.SnapAnchor).Append('|').Append(Settings.X.ToString("F4"));
         sb.Append('|').Append(Settings.Y.ToString("F4")).Append('|').Append(Settings.Align);
         sb.Append('|').Append(LayoutMode ? 1 : 0).Append('|').Append(Visible ? 1 : 0);
         sb.Append('|').Append(Settings.FontSize).Append('|').Append(Settings.LineGap);
+        sb.Append('|').Append(Settings.ShowProgressBar ? 1 : 0)
+          .Append('|').Append(Settings.ProgressBarColor.ToArgb().ToString("X8"))
+          .Append('|').Append(Settings.ProgressBarTrack.ToArgb().ToString("X8"));
         sb.Append('|').Append(Selected ?? "").Append('|').Append(Hovered ?? "");
 
         foreach (string id in AdofaiElements.Order)

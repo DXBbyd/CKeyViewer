@@ -96,5 +96,15 @@ namespace CKeyViewer.Core
         {
             return string.Format(CultureInfo.InvariantCulture, "({0:0.###}, {1:0.###}, {2:0.###}, {3:0.###})", r, g, b, a);
         }
+
+        /// <summary>打包成 0xAARRGGBB（用于缓存签名等）。</summary>
+        public uint ToArgb()
+        {
+            int A = (int)Math.Max(0, Math.Min(255, a * 255 + 0.5f));
+            int R = (int)Math.Max(0, Math.Min(255, r * 255 + 0.5f));
+            int G = (int)Math.Max(0, Math.Min(255, g * 255 + 0.5f));
+            int B = (int)Math.Max(0, Math.Min(255, b * 255 + 0.5f));
+            return (uint)((A << 24) | (R << 16) | (G << 8) | B);
+        }
     }
 }

@@ -708,6 +708,9 @@ namespace CKeyViewer
         private void ApplyWindowGeometry(double blockWidth, double blockHeight, double scale)
         {
             double dpi = _window.DpiScale;
+            _geomBlockW = blockWidth;
+            _geomBlockH = blockHeight;
+            _geomScale = scale;
 
             double wDip = Math.Max(1, blockWidth * scale);
             double hDip = Math.Max(1, blockHeight * scale);
@@ -715,7 +718,20 @@ namespace CKeyViewer
             int anchor = KvSnap.Clamp(Store.Settings.Anchor);
             bool custom = KvGeometry.IsCustom(P.StyleEnum);
 
-            if (anchor != 0 && !custom)
+            // 吸附到 ADOFAI 游戏窗口：预设布局下，按键贴着游戏窗口的某个角，游戏移动时平滑跟随
+            bool snapGame = _adofaiOverlay.Settings.SnapToGame && _gameFound && !custom &&
+                            _gameRectDip.Width > 1 && _gameRectDip.Height > 1;
+
+            if (snapGame)
+            {
+                // 不在这里直接落位：算出目标，位置交给 FollowGameWindow 平滑动画跟随。
+                if (!RecomputeKeyGameTarget())
+                {
+                    _geomTargetLeft = _window.Left;
+                    _geomTargetTop = _window.Top;
+                }
+            }
+            else if (anchor != 0 && !custom)
             {
                 // 吸附：把整块按键贴到工作区九宫格的某个位置。
                 // 只改位置、绝不改大小；工作区一变（分辨率 / 任务栏 / 缩放）
@@ -775,6 +791,104 @@ namespace CKeyViewer
         }
 
         // ---------------------------------------------------------------
+        // 预设窗口「按住热键拖」（非自由布局下，按住 DragHotkeyVk 再用左键拖动）
+        // ---------------------------------------------------------------
+
+        /// <summary>
+        /// 让预设布局也能像自由布局那样随便拖动：按住设定好的热键（默认 Alt）+ 鼠标左键，
+        /// 整套键位就跟着光标走；松手把位置写回 <c>MainKeyViewerPosition</c> 并落盘。
+        /// <para>
+        /// 不依赖 WPF 鼠标事件（覆盖层是分层 + 不可激活窗口，收不到投递），统一用
+        /// <c>GetAsyncKeyState</c> 轮询 + <c>GetCursorPos</c>，与自由布局的节点拖动同源。
+        /// 自由布局（含布局模式）下窗口铺满整屏，没有拖动意义，直接跳过。
+        /// </para>
+        /// </summary>
+        private void HandleWindowDrag()
+        {
+            int vk = Store.Settings.DragHotkeyVk;
+            if (vk <= 0) return;                       // 0 = 功能关闭
+            if (LayoutMode) return;                    // 自由布局编辑时由节点拖动负责
+            if (KvGeometry.IsCustom(P.StyleEnum)) return;
+            // 吸附到游戏窗口时由 FollowGameWindow 接管位置，手动拖动让位（免得互相打架）
+            if (_adofaiOverlay.Settings.SnapToGame && _gameFound) return;
+
+            bool hot = Win32.IsKeyDown(vk);
+            bool lbtn = Win32.IsKeyDown(Win32.VK_LBUTTON);
+
+            if (hot && lbtn && !_winDragActive)
+            {
+                // 上升沿：以当前窗口位置为基准，之后只按光标位移增量移动
+                _winDragActive = true;
+                _winDragLbtn = true;
+                Win32.GetCursorPosition(out _winDragPx, out _winDragPy);
+                _winDragLeft = _window.Left;
+                _winDragTop = _window.Top;
+                _winDragDirty = false;
+                // 从九宫格锚点拖出来 → 释放锚点、改走自定义归一化位置
+                Store.Settings.Anchor = 0;
+                P.CustomPositionEnabled = true;
+                _window.ClickThrough = false;          // 拖动期间不让点击穿透到下层
+                Diag.Log("window drag begin (vk=" + vk + ")");
+            }
+            else if (_winDragActive)
+            {
+                if (hot && lbtn)
+                {
+                    Win32.GetCursorPosition(out int px, out int py);
+                    double dpi = _window.DpiScale;
+                    double dx = (px - _winDragPx) / dpi;
+                    double dy = (py - _winDragPy) / dpi;
+                    _window.Left = _winDragLeft + dx;
+                    _window.Top = _winDragTop + dy;
+                    UpdateMainPositionFromWindow();
+                    _winDragDirty = true;
+                }
+                else
+                {
+                    // 热键或左键松开 → 结束，恢复穿透并落盘
+                    _winDragActive = false;
+                    _window.ClickThrough = true;
+                    if (_winDragDirty)
+                    {
+                        _winDragDirty = false;
+                        QueueSave();
+                        Diag.Log(string.Format(
+                            "window drag end -> X={0:0.###} Y={1:0.###} (saved)",
+                            P.MainKeyViewerPosition.x, P.MainKeyViewerPosition.y));
+                    }
+                }
+            }
+
+            _winDragLbtn = lbtn;
+        }
+
+        /// <summary>
+        /// 把当前窗口左上角（DIP）反推回 <c>MainKeyViewerPosition</c> 的 0..1 归一化坐标，
+        /// 反算公式即 <see cref="ApplyWindowGeometry"/> 自定义位置分支的逆运算。
+        /// </summary>
+        private void UpdateMainPositionFromWindow()
+        {
+            double dpi = _window.DpiScale;
+            double wDip = Math.Max(1, _geomBlockW * _geomScale);
+            double hDip = Math.Max(1, _geomBlockH * _geomScale);
+            Win32.GetPrimaryScreenPixels(out int sw, out int sh);
+            double wPx = wDip * dpi, hPx = hDip * dpi;
+
+            double leftPx = _window.Left * dpi;
+            double topPx = _window.Top * dpi;
+
+            double availW = Math.Max(0, sw - wPx);
+            double availH = Math.Max(0, sh - hPx);
+
+            double nx = availW > 0 ? leftPx / availW : 0;
+            double ny = availH > 0 ? 1.0 - (sh - hPx - topPx) / availH : 0;
+
+            P.MainKeyViewerPosition = KvPos.Of(
+                (float)System.Math.Max(0, System.Math.Min(1, nx)),
+                (float)System.Math.Max(0, System.Math.Min(1, ny)));
+        }
+
+        // ---------------------------------------------------------------
         // 每帧
         // ---------------------------------------------------------------
 
@@ -783,7 +897,10 @@ namespace CKeyViewer
             double now = Now();
 
             WatchWorkArea();
+            PollGameWindow(now);
             AdofaiTick(now);
+            HandleWindowDrag();
+            FollowGameWindow();
 
             if (_adofaiDirty && now >= _adofaiSaveAt)
             {
@@ -889,6 +1006,13 @@ namespace CKeyViewer
         /// <summary>上一次看到的工作区，用来发现分辨率 / 任务栏变化（动态吸附）。</summary>
         private Rect _lastWorkArea;
 
+        // 吸附到 ADOFAI 游戏窗口
+        private bool _gameFound;
+        private Rect _gameRectDip;       // 游戏窗口矩形（DIP，虚拟屏幕坐标）
+        private double _gamePollAt;
+        private Rect _adofaiArea;        // 信息层窗口当前想占的矩形（DIP）
+        private bool _adofaiAnimating;
+
         /// <summary>ADOFAI 信息层窗口（按需创建；功能关闭时隐藏，不占资源）。</summary>
         private Adofai.AdofaiWindow AdofaiWin
         {
@@ -921,28 +1045,77 @@ namespace CKeyViewer
 
             var w = AdofaiWin;
 
+            // 吸附到游戏窗口：不在布局模式时，信息层整块铺在游戏窗口里，跟着游戏走（带动画）。
+            // 布局模式下面板铺满工作区，方便把元素摆到屏幕任意位置。
+            bool snapGame = _adofaiOverlay.Settings.SnapToGame && _gameFound && !LayoutMode &&
+                            _gameRectDip.Width > 1 && _gameRectDip.Height > 1;
+            Rect area = snapGame ? _gameRectDip : KvSnap.WorkArea;
+
             if (!w.IsVisible)
             {
-                w.ApplyBounds();
+                w.ApplyBoundsTo(area);
                 w.Topmost = true;
                 w.Show();
                 w.Raise();
                 _lastWorkArea = KvSnap.WorkArea;
+                _adofaiArea = area;
+                _adofaiAnimating = false;
                 _adofaiSig = null;
                 w.Invalidate();
                 return;
             }
 
-            // 动态吸附：工作区（分辨率 / 任务栏 / 缩放）一变就重铺，
-            // 元素位置由 KvSnap 按新的工作区重新算，不需要用户做任何事。
-            var wa = KvSnap.WorkArea;
-            if (KvSnap.WorkAreaChanged(_lastWorkArea, wa))
+            // 目标矩形变了、或正在动画中 → 平滑追随；否则不动窗口。
+            if (AreaChanged(_adofaiArea, area) || _adofaiAnimating)
             {
-                _lastWorkArea = wa;
-                w.ApplyBounds();
-                _adofaiSig = null;
-                w.Invalidate();
+                AnimateAdofaiWindow(w, area);
             }
+        }
+
+        /// <summary>两块矩形是否「明显不同」（用于决定要不要重铺信息层窗口）。</summary>
+        private static bool AreaChanged(Rect a, Rect b)
+        {
+            const double eps = 0.5;
+            return System.Math.Abs(a.Left - b.Left) > eps ||
+                   System.Math.Abs(a.Top - b.Top) > eps ||
+                   System.Math.Abs(a.Width - b.Width) > eps ||
+                   System.Math.Abs(a.Height - b.Height) > eps;
+        }
+
+        /// <summary>
+        /// 把信息层窗口按指数缓动滑到 <paramref name="target"/>：游戏移动 / 缩放时整块平滑跟随；
+        /// 接近目标就直接贴合，停止动画。动画期间持续重绘，元素才会跟着新尺寸重新排布。
+        /// </summary>
+        private void AnimateAdofaiWindow(Adofai.AdofaiWindow w, Rect target)
+        {
+            const double k = 0.3;
+            double nl = w.Left + (target.Left - w.Left) * k;
+            double nt = w.Top + (target.Top - w.Top) * k;
+            double nw = w.Width + (target.Width - w.Width) * k;
+            double nh = w.Height + (target.Height - w.Height) * k;
+
+            bool done = System.Math.Abs(target.Left - nl) < 0.5 &&
+                        System.Math.Abs(target.Top - nt) < 0.5 &&
+                        System.Math.Abs(target.Width - nw) < 0.5 &&
+                        System.Math.Abs(target.Height - nh) < 0.5;
+
+            if (done)
+            {
+                nl = target.Left; nt = target.Top; nw = target.Width; nh = target.Height;
+                _adofaiAnimating = false;
+            }
+            else
+            {
+                _adofaiAnimating = true;
+            }
+
+            w.Left = nl;
+            w.Top = nt;
+            w.Width = nw;
+            w.Height = nh;
+            _adofaiArea = target;
+            _adofaiSig = null;
+            w.Invalidate();
         }
 
         /// <summary>按键覆盖层自己的动态吸附：工作区变了就按锚点重摆（不重算大小）。</summary>
@@ -958,6 +1131,81 @@ namespace CKeyViewer
                 Diag.Log("work area changed -> re-snap");
                 Rebuild();
             }
+        }
+
+        // ---------------------------------------------------------------
+        // 吸附到 ADOFAI 游戏窗口
+        // ---------------------------------------------------------------
+
+        /// <summary>
+        /// 周期性找一次游戏窗口（每 0.25 秒足够，且省 CPU）。命中就把物理像素矩形换算成
+        /// DIP 存进 <see cref="_gameRectDip"/>；找不到就标记 <see cref="_gameFound"/> = false，
+        /// 此时覆盖层退回普通工作区吸附。
+        /// </summary>
+        private void PollGameWindow(double now)
+        {
+            if (now < _gamePollAt) return;
+            _gamePollAt = now + 0.25;
+
+            var st = _adofaiOverlay.Settings;
+            if (!st.SnapToGame)
+            {
+                _gameFound = false;
+                return;
+            }
+
+            if (Win32.FindGameWindow(st.GameWindowMatch, out int l, out int t, out int r, out int b))
+            {
+                double dpi = _window.DpiScale;
+                var rect = new Rect(l / dpi, t / dpi, (r - l) / dpi, (b - t) / dpi);
+                // 游戏窗口移动 / 缩放 → 重算按键覆盖层的目标角，交由 FollowGameWindow 平滑滑过去
+                if (!_gameFound || AreaChanged(_gameRectDip, rect)) RecomputeKeyGameTarget();
+                _gameRectDip = rect;
+                _gameFound = true;
+            }
+            else
+            {
+                _gameFound = false;
+            }
+        }
+
+        /// <summary>按当前游戏窗口矩形 + 按键锚点算出按键覆盖层该贴的左上角（DIP）。</summary>
+        private bool RecomputeKeyGameTarget()
+        {
+            double wDip = Math.Max(1, _geomBlockW * _geomScale);
+            double hDip = Math.Max(1, _geomBlockH * _geomScale);
+
+            int a = KvSnap.Clamp(_adofaiOverlay.Settings.KeyAnchor);
+            if (a == 0) a = (int)KvAnchor.BottomCenter;
+
+            return KvSnap.Place(a, Store.Settings.AnchorMargin, wDip, hDip, _gameRectDip,
+                                out _geomTargetLeft, out _geomTargetTop);
+        }
+
+        /// <summary>
+        /// 让按键覆盖层平滑追随游戏窗口：每帧把当前位置按指数缓动往目标角挪一点，
+        /// 游戏静止时目标等于当前位置、不再移动；游戏一移动，覆盖层就滑过去。
+        /// </summary>
+        private void FollowGameWindow()
+        {
+            var st = _adofaiOverlay.Settings;
+            bool snapGame = st.SnapToGame && _gameFound && !KvGeometry.IsCustom(P.StyleEnum) &&
+                            _gameRectDip.Width > 1 && _gameRectDip.Height > 1;
+            if (!snapGame) return;
+
+            double tx = _geomTargetLeft, ty = _geomTargetTop;
+            double curL = _window.Left, curT = _window.Top;
+            double dL = tx - curL, dT = ty - curT;
+            if (System.Math.Abs(dL) < 0.4 && System.Math.Abs(dT) < 0.4)
+            {
+                _window.Left = tx;
+                _window.Top = ty;
+                return;
+            }
+
+            const double k = 0.28;   // 每帧逼近比例，越大跟得越紧
+            _window.Left = curL + dL * k;
+            _window.Top = curT + dT * k;
         }
 
         /// <summary>
@@ -1175,6 +1423,17 @@ namespace CKeyViewer
         private bool _escWasDown;
         private readonly bool[] _nudgeWas = new bool[4];
         private readonly double[] _nudgeNext = new double[4];
+
+        // 预设窗口「按住热键拖」的状态（与自由布局的节点拖动 _dragNode 互不相干）
+        private bool _winDragActive;
+        private bool _winDragLbtn;
+        private int _winDragPx, _winDragPy;
+        private double _winDragLeft, _winDragTop;
+        private bool _winDragDirty;
+        // 最近一次 ApplyWindowGeometry 算出的几何（用于把窗口 DIP 反推回归一化坐标）
+        private double _geomBlockW, _geomBlockH, _geomScale;
+        // 吸附到游戏窗口时的目标左上角（交给 FollowGameWindow 平滑追随）
+        private double _geomTargetLeft, _geomTargetTop;
 
         // 信息层（ADOFAI）在其自己的窗口上拖动时的状态
         private Adofai.AdofaiElement _adofaiDragEl;

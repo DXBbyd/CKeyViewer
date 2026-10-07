@@ -72,6 +72,9 @@ namespace CKeyViewer
             Out.AppendLine("---- adofai element layout ----");
             AdofaiElementLayout();
 
+            Out.AppendLine("---- adofai progress bar ----");
+            AdofaiProgressBar();
+
             Out.AppendLine("---- tray menu skin ----");
             MenuSkin();
 
@@ -494,6 +497,50 @@ namespace CKeyViewer
         }
 
         /// <summary>
+        /// 信息层的进度条：PROG 打开进度条后，整块与 PROG 元素本身都要变高
+        /// （多出「文字与条之间的缝 + 条高」）；关掉又变回来。
+        /// </summary>
+        private static void AdofaiProgressBar()
+        {
+            var ov = new Adofai.AdofaiOverlay();
+            var s = ov.Settings;
+
+            s.Enabled = true;
+            s.AutoLayout = true;
+            s.SnapAnchor = (int)KvAnchor.TopCenter;
+            s.SnapMargin = 20;
+            s.FontSize = 20;
+
+            ov.Visible = true;
+            var st = ov.State;
+            st.InLevel = true;
+            st.CurrentTile = 5;
+            st.TotalTiles = 100;
+            st.Progress = 0.5f;
+
+            var area = new Rect(0, 0, 1000, 800);
+
+            s.ShowProgressBar = true;
+            s.Sanitize();
+            DrawAdofai(ov, area);
+            double withBar = ov.GroupRect.Height;
+            var progWithBar = ov.RectOf(Adofai.AdofaiElements.Prog);
+
+            s.ShowProgressBar = false;
+            s.Sanitize();
+            DrawAdofai(ov, area);
+            double noBar = ov.GroupRect.Height;
+            var progNoBar = ov.RectOf(Adofai.AdofaiElements.Prog);
+
+            Check("PROG 元素有矩形", !progWithBar.IsEmpty && !progNoBar.IsEmpty);
+            Check(string.Format("进度条让整块变高（{0:0.#} > {1:0.#}）", withBar, noBar),
+                withBar > noBar + 1.0);
+            Check(string.Format("PROG 元素也变高（{0:0.#} > {1:0.#}）",
+                    progWithBar.Height, progNoBar.Height),
+                progWithBar.Height > progNoBar.Height + 1.0);
+        }
+
+        /// <summary>
         /// 信息层的元素布局。走的是真正的绘制路径（DrawingContext 到 DrawingVisual），
         /// 再把画出来的矩形回读做命中测试与拖动 —— 和鼠标拖动时跑的是同一段代码，
         /// 但不需要模拟输入（模拟键鼠会抢用户的键盘，而且有的机器上会被 UIPI 挡掉）。
@@ -508,6 +555,10 @@ namespace CKeyViewer
             s.SnapAnchor = (int)KvAnchor.TopCenter;
             s.SnapMargin = 20;
             s.FontSize = 20;
+            // 关掉进度条：这一段专门验证「拖动位移 = 拖拽量」，
+            // 进度条会给整块增高、把判定条往下挤，导致纵向拖拽被夹取。
+            // 进度条本身另开一段 AdofaiProgressBar 单独验证。
+            s.ShowProgressBar = false;
             s.Sanitize();
 
             ov.Visible = true;

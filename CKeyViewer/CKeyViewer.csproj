@@ -25,9 +25,9 @@
     <ApplicationIcon>assets\app.ico</ApplicationIcon>
 
     <!-- 版本与文件属性 -->
-    <Version>1.3.0</Version>
-    <AssemblyVersion>1.3.0.0</AssemblyVersion>
-    <FileVersion>1.3.0.0</FileVersion>
+    <Version>1.4.0</Version>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
+    <FileVersion>1.4.0.0</FileVersion>
     <AssemblyTitle>CKeyViewer 按键可视化覆盖层</AssemblyTitle>
     <Product>CKeyViewer</Product>
     <Company>DXBbyd</Company>

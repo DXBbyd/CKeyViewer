@@ -330,7 +330,10 @@ namespace CKeyViewer
                 _suppress = false;
             }
 
-            if (rebuild) Rebuild();
+            if (rebuild)             // 每次显示（首次打开 / 从托盘重新唤起）都来一次出场动画
+            Loaded += (s, e) => AnimateWindowOpen();
+
+            Rebuild();
             UpdateHeader();
         }
 
@@ -392,25 +395,82 @@ namespace CKeyViewer
             else
             {
                 _scroll.ScrollToTop();
-                AnimateIn(panel);
+                AnimateGroupsIn(panel);
             }
         }
 
-        /// <summary>切标签页时给内容一个淡入 + 轻微上滑，让界面「动」起来。</summary>
-        private void AnimateIn(FrameworkElement el)
+        /// <summary>
+        /// 切标签页时让内容一组一组「错峰」淡入上滑：标题先出来，卡片依次跟上，
+        /// 比整页一起淡入有层次得多。延迟封顶，免得长页面尾巴拖太久。
+        /// </summary>
+        private void AnimateGroupsIn(Panel panel)
         {
+            if (panel == null) return;
+
             try
             {
-                el.Opacity = 0;
-                var tr = new TranslateTransform(0, 10);
-                el.RenderTransform = tr;
-                el.RenderTransformOrigin = new Point(0.5, 0);
+                int i = 0;
+                foreach (UIElement child in panel.Children)
+                {
+                    if (!(child is FrameworkElement fe)) { i++; continue; }
+
+                    fe.Opacity = 0;
+                    var tr = new TranslateTransform(0, 14);
+                    fe.RenderTransform = tr;
+                    fe.RenderTransformOrigin = new Point(0.5, 0);
+
+                    double delay = Math.Min(220, i * 26);
+                    var oa = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(190))
+                    {
+                        BeginTime = TimeSpan.FromMilliseconds(delay),
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                    };
+                    var ya = new DoubleAnimation(14, 0, TimeSpan.FromMilliseconds(250))
+                    {
+                        BeginTime = TimeSpan.FromMilliseconds(delay),
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                    };
+
+                    var sb = new Storyboard();
+                    Storyboard.SetTarget(oa, fe);
+                    Storyboard.SetTargetProperty(oa, new PropertyPath(UIElement.OpacityProperty));
+                    Storyboard.SetTarget(ya, tr);
+                    Storyboard.SetTargetProperty(ya, new PropertyPath(TranslateTransform.YProperty));
+                    sb.Children.Add(oa);
+                    sb.Children.Add(ya);
+                    sb.Begin();
+
+                    i++;
+                }
+            }
+            catch
+            {
+                foreach (UIElement child in panel.Children)
+                    if (child is FrameworkElement fe)
+                    {
+                        fe.Opacity = 1;
+                        fe.RenderTransform = null;
+                    }
+            }
+        }
+
+        /// <summary>窗口刚打开时，整块内容淡入 + 轻微上滑，跟系统 Alert 一样的出场感。</summary>
+        private void AnimateWindowOpen()
+        {
+            if (!(Content is FrameworkElement root)) return;
+            try
+            {
+                root.Opacity = 0;
+                var tr = new TranslateTransform(0, 12);
+                root.RenderTransform = tr;
+
+                var oa = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                var ya = new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(240))
+                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+
                 var sb = new Storyboard();
-                var oa = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(170))
-                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-                var ya = new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(210))
-                { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-                Storyboard.SetTarget(oa, el);
+                Storyboard.SetTarget(oa, root);
                 Storyboard.SetTargetProperty(oa, new PropertyPath(UIElement.OpacityProperty));
                 Storyboard.SetTarget(ya, tr);
                 Storyboard.SetTargetProperty(ya, new PropertyPath(TranslateTransform.YProperty));
@@ -420,8 +480,8 @@ namespace CKeyViewer
             }
             catch
             {
-                el.Opacity = 1;
-                el.RenderTransform = null;
+                root.Opacity = 1;
+                root.RenderTransform = null;
             }
         }
 
@@ -607,6 +667,13 @@ namespace CKeyViewer
                 () => s.AnchorDynamic,
                 v => { s.AnchorDynamic = v; _host.QueueSave(); }));
 
+            p.Children.Add(Kit.HotkeyPicker("拖动热键（按住 + 左键拖窗口）",
+                () => s.DragHotkeyVk,
+                v => { s.DragHotkeyVk = v; _host.QueueSave(); }));
+            p.Children.Add(Kit.Hint(
+                "非自由布局下，按住这个键再用鼠标左键拖动覆盖层，就能把整套键位放到屏幕任意位置；\r\n" +
+                "松手自动落盘。从九宫格拖出来会自动解除吸附、改走自定义位置。设为「关闭」即禁用。"));
+
             if (custom)
                 p.Children.Add(Kit.Hint("当前是自由布局：覆盖层铺满整屏、节点各自定位，吸附不生效。"));
             else if (s.Anchor == 0)
@@ -640,6 +707,20 @@ namespace CKeyViewer
                 p.Children.Add(Kit.Hint(
                     "已关掉自动排列：每个元素用「ADOFAI」页里的位置，方向键微调的步长是 1 像素（Shift 为 10）。"));
             }
+
+            // ---- 吸附到 ADOFAI 游戏窗口 ----
+            p.Children.Add(Kit.Section("吸附到 ADOFAI 游戏窗口"));
+            p.Children.Add(Kit.Hint(
+                "开启后，按键覆盖层和信息层都贴着游戏窗口摆，游戏窗口移动 / 缩放时整块平滑跟随（带缓动动画）。\r\n" +
+                "游戏没运行时退回普通工作区吸附。按键贴游戏窗口的哪个角由下面的九宫格决定；信息层的位置见「ADOFAI」页的吸附设置。"));
+            p.Children.Add(Kit.Check("吸附到游戏窗口（带平滑动画）",
+                () => a.SnapToGame,
+                v => { a.SnapToGame = v; _host.QueueSave(); _host.Rebuild(); Rebuild(); }));
+            p.Children.Add(Kit.TextBoxRow("游戏窗口匹配（标题包含）",
+                () => a.GameWindowMatch,
+                v => { a.GameWindowMatch = v ?? ""; _host.QueueSave(); }));
+            p.Children.Add(Kit.Row("按键贴游戏窗口",
+                Kit.AnchorPicker(() => a.KeyAnchor, v => { a.KeyAnchor = v; _host.QueueSave(); })));
 
             p.Children.Add(Kit.HRow(
                 Kit.Button(_host.LayoutMode ? "退出拖动模式（Esc）" : "▶ 在屏幕上拖动摆放",
@@ -1835,8 +1916,16 @@ namespace CKeyViewer
 
             if (s.AutoLayout)
             {
-                p.Children.Add(Kit.Row("整块吸附", Kit.AnchorPicker(() => s.SnapAnchor,
-                    v => ApplyAdofai(() => s.SnapAnchor = v))));
+                p.Children.Add(Kit.Hint(
+                    "布局预设决定整块怎么排：堆叠是竖排一列，顶栏 / 底栏是横排一条，" +
+                    "左 / 右侧栏贴边竖排，精简只留「连击 / ACC / X-ACC / 进度」这几行。进度条随预设一起排。"));
+                p.Children.Add(Kit.Row("布局预设", Kit.Segmented(
+                    new[] { "堆叠", "顶栏", "底栏", "左侧", "右侧", "精简" },
+                    () => s.LayoutPreset,
+                    v => ApplyAdofai(() => s.LayoutPreset = v), 300, 32)));
+                if (s.LayoutPreset == 0)
+                    p.Children.Add(Kit.Row("整块吸附", Kit.AnchorPicker(() => s.SnapAnchor,
+                        v => ApplyAdofai(() => s.SnapAnchor = v))));
                 p.Children.Add(Kit.Slider("吸附边距", 0, 200, () => s.SnapMargin,
                     v => ApplyAdofai(() => s.SnapMargin = v), "0"));
             }

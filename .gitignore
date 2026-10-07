@@ -54,3 +54,4 @@ desktop.ini
 *.before-migrate
 ckv_error.log
 ckv_selftest.txt
+_preview/

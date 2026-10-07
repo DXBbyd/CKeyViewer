@@ -10,8 +10,11 @@
 
 环境变量：
     GITHUB_TOKEN / GH_TOKEN   必填
-    TAG                       默认 V1.1.0（仓库里的 tag 用大写 V，如 V1.0.0）
-    RELEASE_NAME              默认 "CKeyViewer 1.0.0"
+    TAG                       默认 V1.4.0（仓库里的 tag 用大写 V，如 V1.0.0）
+    VERSION                   默认由 TAG 去掉前缀 V 得到（一般不用单独给）
+    RELEASE_NAME              默认 "CKeyViewer <VERSION>"
+
+例：发布 1.3.0 —— `TAG=V1.3.0 python tools/publish_release.py`
 
 为什么不走 git：本机 github.com:443 时通时不通，而且 Release 资产（108 MB）不能靠 git 推
 （单文件超过 GitHub 的 100 MB 限制）。这里直接打 REST API。
@@ -25,8 +28,9 @@ import urllib.parse
 import urllib.request
 
 REPO = "DXBbyd/CKeyViewer"
-TAG = os.environ.get("TAG", "V1.1.0")
-VERSION = "1.1.0"
+TAG = os.environ.get("TAG", "V1.4.0")
+# 版本号跟着 TAG 走，免得改一处忘一处（TAG 形如 V1.3.0 ⇒ VERSION=1.3.0）
+VERSION = os.environ.get("VERSION") or TAG.lstrip("vV")
 RELEASE_NAME = os.environ.get("RELEASE_NAME", "CKeyViewer " + VERSION)
 TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
 

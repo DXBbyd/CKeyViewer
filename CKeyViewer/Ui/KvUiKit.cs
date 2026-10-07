@@ -478,6 +478,58 @@ namespace CKeyViewer.Ui
             return sp;
         }
 
+        /// <summary>
+        /// 「按住热键拖窗口」用的虚拟键码选择器。按钮显示当前键名，点击后进入监听，
+        /// 下一次按键（左右修饰键自动归一化为通用 VK）即写入；0 = 关闭拖动。
+        /// </summary>
+        public static FrameworkElement HotkeyPicker(string label, Func<int> get, Action<int> set)
+        {
+            var btn = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(14, 7, 14, 7),
+                Background = PanelAlt,
+                BorderBrush = Border,
+                BorderThickness = new Thickness(1),
+                FontFamily = UiFont,
+                FontSize = 12.5,
+                Foreground = Text,
+                Cursor = Cursors.Hand,
+                MinWidth = 156,
+            };
+
+            bool listening = false;
+            void UpdateName()
+            {
+                int vk = get();
+                btn.Content = listening ? "按下任意键…（Esc 取消）"
+                                        : (vk == 0 ? "关闭（不拖动）" : VkName(vk));
+            }
+            UpdateName();
+
+            btn.Click += (s, e) =>
+            {
+                if (listening) return;
+                listening = true;
+                UpdateName();
+                btn.Focus();
+            };
+
+            btn.PreviewKeyDown += (s, e) =>
+            {
+                if (!listening) return;
+                e.Handled = true;
+                if (e.Key == Key.Escape) { listening = false; UpdateName(); return; }
+                Key k = (e.Key == Key.System) ? e.SystemKey : e.Key;
+                int vk = NormalizeVk(KeyInterop.VirtualKeyFromKey(k));
+                listening = false;
+                set(vk);
+                UpdateName();
+            };
+
+            return Row(label, btn);
+        }
+
         public static FrameworkElement Hint(string text)
         {
             var t = Text2(text, 11.5, Sub);
@@ -838,8 +890,8 @@ namespace CKeyViewer.Ui
                 Cursor = Cursors.Hand,
                 Tag = TagRow
             };
-            cb.Checked += (s, e) => set(true);
-            cb.Unchecked += (s, e) => set(false);
+            cb.Checked += (s, e) => { set(true); Pulse(cb, 1.018, 130, 0.0, 0.5); };
+            cb.Unchecked += (s, e) => { set(false); Pulse(cb, 1.018, 130, 0.0, 0.5); };
             return cb;
         }
 
@@ -1478,6 +1530,37 @@ namespace CKeyViewer.Ui
             return b;
         }
 
+        /// <summary>
+        /// 给控件来一下「弹一下」的缩放反馈：快速放大到 <paramref name="peak"/> 再弹回 1。
+        /// 用于勾选 / 切换 / 点按这类需要即时触感的地方。默认从中心缩放。
+        /// </summary>
+        public static void Pulse(FrameworkElement el, double peak = 1.06, int ms = 140,
+                                 double originX = 0.5, double originY = 0.5)
+        {
+            if (el == null) return;
+            try
+            {
+                var st = el.RenderTransform as ScaleTransform;
+                if (st == null)
+                {
+                    st = new ScaleTransform(1, 1);
+                    el.RenderTransform = st;
+                    el.RenderTransformOrigin = new Point(originX, originY);
+                }
+
+                int up = Math.Max(30, (int)(ms * 0.35));
+                var a = new System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames();
+                a.KeyFrames.Add(new System.Windows.Media.Animation.EasingDoubleKeyFrame(
+                    peak, System.Windows.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(up))));
+                a.KeyFrames.Add(new System.Windows.Media.Animation.EasingDoubleKeyFrame(
+                    1.0, System.Windows.Media.Animation.KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(ms))));
+
+                st.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+                st.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+            }
+            catch { }
+        }
+
         // ---------------------------------------------------------------
         // 工具
         // ---------------------------------------------------------------
@@ -1487,6 +1570,52 @@ namespace CKeyViewer.Ui
             if (unityCode == 0) return "（未绑定）";
             string n = KeyCodeMap.DisplayName(unityCode);
             return string.IsNullOrEmpty(n) ? "K" + unityCode : n;
+        }
+
+        /// <summary>把虚拟键码转成可读名称（用于热键选择器显示）。</summary>
+        private static string VkName(int vk)
+        {
+            switch (vk)
+            {
+                case 0x01: return "鼠标左键";
+                case 0x02: return "鼠标右键";
+                case 0x08: return "Backspace";
+                case 0x09: return "Tab";
+                case 0x0D: return "Enter";
+                case 0x10: return "Shift";
+                case 0x11: return "Ctrl";
+                case 0x12: return "Alt";
+                case 0x13: return "Pause";
+                case 0x14: return "Caps";
+                case 0x20: return "空格";
+                case 0x1B: return "Esc";
+                case 0x24: return "Home";
+                case 0x23: return "End";
+                case 0x21: return "PgUp";
+                case 0x22: return "PgDn";
+                case 0x25: return "←";
+                case 0x26: return "↑";
+                case 0x27: return "→";
+                case 0x28: return "↓";
+                case 0x2C: return "PrtSc";
+                case 0x2D: return "Ins";
+                case 0x2E: return "Del";
+                case 0x5B: case 0x5C: return "Win";
+            }
+            if (vk >= 0x30 && vk <= 0x39) return ((char)vk).ToString();
+            if (vk >= 0x41 && vk <= 0x5A) return ((char)vk).ToString();
+            if (vk >= 0x60 && vk <= 0x6F) return "小键盘" + (vk - 0x60);
+            if (vk >= 0x70 && vk <= 0x87) return "F" + (vk - 0x6F);
+            return "键0x" + vk.ToString("X2");
+        }
+
+        /// <summary>左右修饰键归一化为通用 VK（Alt/Ctrl/Shift 的左右两边用同一个值判断）。</summary>
+        private static int NormalizeVk(int vk)
+        {
+            if (vk == 0xA4 || vk == 0xA5) return 0x12;   // LMENU / RMENU
+            if (vk == 0xA2 || vk == 0xA3) return 0x11;   // LCONTROL / RCONTROL
+            if (vk == 0xA0 || vk == 0xA1) return 0x10;   // LSHIFT / RSHIFT
+            return vk;
         }
     }
 }

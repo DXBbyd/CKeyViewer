@@ -17,7 +17,7 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERSION = "1.1.0"
+VERSION = "1.4.0"
 
 APP_EXE = os.path.join(ROOT, "release", "app", "CKeyViewer.exe")
 SETUP_EXE = os.path.join(ROOT, "release", "setup", "CKeyViewerSetup.exe")

@@ -69,11 +69,16 @@ namespace CKeyViewer.Adofai
         /// <summary>铺满当前工作区（DIP）。工作区变了就再调一次 —— 这就是「动态吸附」的一半。</summary>
         public void ApplyBounds()
         {
-            var wa = KvSnap.WorkArea;
-            Left = wa.Left;
-            Top = wa.Top;
-            Width = Math.Max(1, wa.Width);
-            Height = Math.Max(1, wa.Height);
+            ApplyBoundsTo(KvSnap.WorkArea);
+        }
+
+        /// <summary>把窗口铺到指定的矩形（DIP，虚拟屏幕坐标）。吸附到游戏窗口时用来贴住游戏。</summary>
+        public void ApplyBoundsTo(Rect area)
+        {
+            Left = area.Left;
+            Top = area.Top;
+            Width = Math.Max(1, area.Width);
+            Height = Math.Max(1, area.Height);
         }
 
         public void Invalidate() => Surface.InvalidateVisual();
